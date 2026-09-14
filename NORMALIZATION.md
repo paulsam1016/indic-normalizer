@@ -106,7 +106,7 @@ English-number canonicalization → digit verbalization → lowercase → whites
 | # | Item | Effect | Notes |
 |---|------|--------|-------|
 | E1 | Unicode NFC | CER | Canonical composition. |
-| E2 | Chillu / ZWJ-ZWNJ canonicalization | CER | indic-nlp when present; stdlib chillu map fallback (`ന്‍`→`ൻ`, etc.). |
+| E2 | Chillu / ZWJ-ZWNJ canonicalization | CER | via indic-nlp-library (a required dependency). |
 | E3 | `⁇` / `<unk>` removal | CER + WER | Soniox/base-model OOV marker; removed from both sides. |
 | E4 | Zero-width (ZWNJ/ZWJ/BOM) drop | CER | After the chillu fix. |
 | E5 | ASCII + Indic punctuation removal | CER + WER | Includes danda `।` `॥`, quotes, dashes. |
@@ -142,11 +142,11 @@ Reduces genuine residual error; most-per-line-of-code wins first.
 |---|------|------------------|---------------|
 | C1 | **Samvruthokaram / final-vowel drift** (`നാല്` vs `നാലു` vs `നാല`; final `ു്`/`്`/`ു`) | Hits nearly every word ending → large, broad CER contributor. | Canonicalize word-final samvruthokaram to one form (align with the form the number tables already emit). |
 | C2 | **Anusvara vs nasal spelling** (`കാര്യം` vs `കാര്യന്`; `ം` vs `ന്`/`മ്`) | Per-character substitution surviving current pipeline. | Rule to canonicalize word-final nasal representation. |
-| C3 | **Conjunct / reph / `്യ`·`്വ` ordering variants** not unified by NFC | Multiple valid encodings of the same conjunct; stdlib fallback misses them. | Rely on indic-nlp when present; add targeted rules for the common ones in the stdlib path. |
+| C3 | **Conjunct / reph / `്യ`·`്വ` ordering variants** not unified by NFC | Multiple valid encodings of the same conjunct. | Mostly handled by indic-nlp (required); add targeted rules for any common ones it misses. |
 | C4 | **Long-vowel / gemination spelling drift** (`ാ` vs `ാാ`, `ക്ക` vs `ക`) | Casual-transcription doubling/undoubling. | Optional collapse of obvious duplicates; be conservative to avoid changing meaning. |
 | C5 | **Foreign-word transliteration variants** (`ഫോൺ`/`ഫോണ്`, `ബസ്`/`ബസ്സ്`) | Same borrowed word, different spelling. | Small canonical-spelling lexicon for frequent borrowings. |
 | C6 | **Visual-lookalike letters/digits** (`ഠ`/`൦`/`0`/`O`) | Rare homoglyph substitutions. | Low priority; map if observed. |
-| <a name="c7"></a>C7 | **indic-nlp fallback parity gap** — colon→visarga (`ദു:ഖം`→`ദുഃഖം`) and two-part vowel-sign composition (` െ`+`ാ`→`ൊ`, au forms) fire **only when indic-nlp-library is installed**; the stdlib fallback path skips them. | Same input scores differently with vs without the optional dependency — a silent, environment-dependent CER difference on both sides. | Port these two rules (from indic-nlp's `MalayalamNormalizer`) into the stdlib fallback, **or** make indic-nlp a hard dependency for the `ml` path. Overlaps C3. Guard: `ദു:ഖം`↔`ദുഃഖം`, `െ`+`ാ`↔`ൊ`. |
+| <a name="c7"></a>C7 | ~~indic-nlp fallback parity gap~~ **RESOLVED** — colon→visarga and two-part vowel-sign composition used to fire only when indic-nlp-library was installed. | (was) an environment-dependent CER difference. | **Fixed** by making `indic-nlp-library` a **hard dependency** (the "or make indic-nlp a hard dependency" option). The stdlib chillu fallback was removed; there is now a single code path. No parity gap remains. |
 | <a name="c8"></a>C8 | **Bare (ZWJ-less) word-final chillu** — `consonant + virama` with no ZWJ may not unify with atomic chillu, since indic-nlp keys on the ZWJ. | Legacy/IME chillu without ZWJ mismatches an atomic-chillu reference. | Audit the eval corpus for bare word-final `+virama`; if present, add the mapping to the stdlib chillu table. |
 
 ---
@@ -165,9 +165,9 @@ Pair it with pinned regression cases for the crown-jewel rules: `വിവേക
 
 ## Recommended order
 
-0. **Add the guardrail test (above) + C7 fallback parity** — cheap, and they protect the
-   wins already banked. C7 removes an environment-dependent scoring difference; the identity
-   test prevents silently reintroducing the vanishing-vowels bug. Do these alongside step 1.
+0. **Guardrail test** (above) — cheap, protects the wins already banked; prevents silently
+   reintroducing the vanishing-vowels bug. (C7 fallback-parity is already **resolved** —
+   indic-nlp-library is now a hard dependency, so there is a single code path.)
 1. **Adopt spacing-insensitive CER** as the headline Malayalam metric (low-risk in
    `eval_metrics`) — directly quantifies how much of the gap is W1/W3 segmentation. Do this first.
 2. **W1 + W3** (postposition split-merge + acronym/letter-sequence collapse) — biggest WER-side wins.
@@ -199,8 +199,8 @@ The reference Malayalam normalizers and what each actually does, evaluated for t
 | NFC (E1) | ✅ | ➖ does own | ➖ | ➖ |
 | chillu ZWJ-seq → atomic (E2) | ✅ via indic-nlp | ✅ default | ✅ | ✅ |
 | **`ൻ്റ→ന്റ` conjunct (E12)** | ✅ **unique** | ❌ | ❌ | ❌ |
-| two-part vowel signs (`ൊ ോ ൌ`) | ✅ *(indic-nlp only — see C7)* | ✅ | ✅ | ✅ |
-| colon → visarga | ✅ *(indic-nlp only — see C7)* | ✅ | ✅ | ✅ |
+| two-part vowel signs (`ൊ ോ ൌ`) | ✅ via indic-nlp (required) | ✅ | ✅ | ✅ |
+| colon → visarga | ✅ via indic-nlp (required) | ✅ | ✅ | ✅ |
 | Indic danda `।॥` removed (E5) | ✅ | ➖ | ❌ ASCII-only | ➖ |
 | Indic digit → ASCII (E6) | ✅ | ❌ | ❌ | ❌ |
 | **digit verbalization (E8)** | ✅ **unique** | ❌ | ❌ | ❌ |
@@ -209,7 +209,7 @@ The reference Malayalam normalizers and what each actually does, evaluated for t
 | opinionated typo/spelling "fix" | ❌ correctly avoids | ➖ opt-in | ⚠️ **on by default** | ➖ |
 
 Notes:
-- **indic-nlp-library** (Anoop Kunchukuttan, MIT) — the de-facto standard and our optional
+- **indic-nlp-library** (Anoop Kunchukuttan, MIT) — the de-facto standard and our required
   backend. Its `MalayalamNormalizer` composes legacy ZWJ chillu → atomic (default on),
   does two-part vowels / poorna-virama / colon→visarga (default on), and `റ്റ→ട്ട` +
   reverse chillu decomposition (default **off**). Does **not** handle E12.

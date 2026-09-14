@@ -3,11 +3,11 @@ Malayalam ASR text normalization for WER/CER scoring.
 
 Applied identically to reference AND hypothesis, so scores aren't inflated by
 convention/encoding differences. normalize() does: mis-encoded chillu-conjunct fix
-(ൻ്റ→ന്റ, NFC-invisible), chillu / ZWJ-ZWNJ canonicalization (indic-nlp-library if
-present, else a stdlib fallback), Unicode NFC, <unk>('⁇') + punctuation removal,
-Indic-digit → ASCII, digit verbalization, English↔Malayalam number canonicalization,
-lowercase (for code-mixed English), whitespace collapse. See NORMALIZATION.md for the
-full coverage/gap analysis and the design rationale.
+(ൻ്റ→ന്റ, NFC-invisible), chillu / ZWJ-ZWNJ canonicalization (via indic-nlp-library, a
+hard dependency), Unicode NFC, <unk>('⁇') + punctuation removal, Indic-digit → ASCII,
+digit verbalization, English↔Malayalam number canonicalization, lowercase (for
+code-mixed English), whitespace collapse. See NORMALIZATION.md for the full
+coverage/gap analysis and the design rationale.
 
 Digit verbalization: many ASR tokenizers have NO 0-9 pieces, so a digit left in a
 target tokenizes to <unk> and teaches the model to emit '⁇' for spoken numbers. Digits
@@ -35,16 +35,6 @@ _ZW      = base.ZERO_WIDTH               # ZWNJ, ZWJ, BOM (drop AFTER the chillu
 _UNK     = base.UNK
 _PUNCT   = base.PUNCT
 _SPACE   = base.SPACE
-# Malayalam chillu written as consonant + virama + ZWJ(‍) -> atomic chillu (fallback
-# when indic-nlp is absent). ZWJ escaped so the source is copy-paste-safe.
-_CHILLU  = {
-    "ണ്‍": "ൺ",
-    "ന്‍": "ൻ",
-    "ര്‍": "ർ",
-    "ല്‍": "ൽ",
-    "ള്‍": "ൾ",
-    "ക്‍": "ൿ",
-}
 # Mis-encoded conjunct fix: an atomic chillu is a "dead" consonant with no following
 # vowel, so a chillu directly followed by a virama is not a real chillu — it's the base
 # consonant + virama typed with the wrong first codepoint (phones/IMEs emit this for the
@@ -216,23 +206,20 @@ def _canonicalize_en_numbers(text: str) -> str:
     return " ".join(out)
 
 
-try:
-    from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
-    _IND_NORM = IndicNormalizerFactory().get_normalizer("ml")
-except Exception:
-    _IND_NORM = None
+# indic-nlp-library is a hard dependency (see pyproject.toml). It canonicalizes chillu /
+# ZWJ, two-part vowel signs, and colon→visarga.
+from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
 
-INDIC_NLP_AVAILABLE = _IND_NORM is not None
+_IND_NORM = IndicNormalizerFactory().get_normalizer("ml")
+
+# Kept for backward compatibility with importers that read this flag; always True now.
+INDIC_NLP_AVAILABLE = True
 
 
 def normalize(text: str) -> str:
     """Normalize Malayalam ASR text (see module docstring); returns cleaned, lowercased text."""
     text = _fix_chillu_conjuncts(text or "")      # ൻ്റ -> ന്റ etc. (mis-encoded conjunct, NFC-invisible)
-    if _IND_NORM is not None:
-        text = _IND_NORM.normalize(text)          # canonicalizes chillu / ZWJ properly
-    else:
-        for seq, atom in _CHILLU.items():
-            text = text.replace(seq, atom)        # fallback chillu fix BEFORE dropping ZWJ
+    text = _IND_NORM.normalize(text)              # chillu / ZWJ / two-part vowels / visarga
     text = unicodedata.normalize("NFC", text)
     text = _UNK.sub(" ", text)
     text = _ZW.sub("", text)

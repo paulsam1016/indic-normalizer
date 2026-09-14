@@ -26,9 +26,8 @@ comparison.
 
 **Working, installed, and green.** The library was scaffolded and ported from
 AetherTranscribe's `scripts/normalizers/` this session. `pip install -e ".[dev]"` succeeds
-and **20/20 tests pass**, verified on BOTH code paths:
-- stdlib fallback (no `indic-nlp-library`), and
-- with `indic-nlp-library` installed (the fuller Malayalam rule set).
+and **20/20 tests pass**. `indic-nlp-library` is a **required** dependency (single code
+path — the earlier stdlib chillu fallback was removed; see C7 below).
 
 Smoke-tested public API (all confirmed working):
 ```python
@@ -42,7 +41,7 @@ normalize("Hello, WORLD!")         # "hello world"  (universal fallback)
 
 **File layout:**
 ```
-pyproject.toml                     # hatchling, src layout; deps=[]; extras: [indic],[dev]
+pyproject.toml                     # hatchling, src layout; deps=[indic-nlp-library]; extra: [dev]
 README.md
 NORMALIZATION.md                   # authoritative design/coverage/gap doc (cite this)
 HANDOFF.md                         # this file
@@ -53,7 +52,7 @@ src/indic_normalizer/
   registry.py                      # _ALIASES, _lang_code, _load (lazy), get_normalizer, script_of + _SCRIPT_BLOCKS
   languages/
     __init__.py
-    malayalam.py                   # chillu, ൻ്റ fix, digit verbalization, EN↔ML numbers, indic-nlp optional
+    malayalam.py                   # chillu, ൻ്റ fix, digit verbalization, EN↔ML numbers (indic-nlp required)
 tests/
   test_universal.py                # 7 tests
   test_malayalam.py                # 13 tests (E12/E8/E9 pins + vanishing-vowels guardrail)
@@ -71,7 +70,7 @@ they will drift unless one becomes canonical.
 ## Completed Tasks
 
 1. **Package scaffolded** — `pyproject.toml` (PEP 621, hatchling backend, src layout, zero
-   required deps, `[indic]`=indic-nlp-library / `[dev]`=pytest extras), `README.md`.
+   `indic-nlp-library` required dep, `[dev]`=pytest extra), `README.md`.
 2. **`base.py`** — shared framework: `to_nfc`, `strip_unk`, `strip_zero_width`,
    `fold_digits`, `strip_punct`, `collapse_space`, plus the shared `UNK`/`ZERO_WIDTH`/
    `PUNCT`/`SPACE` regexes. Explicit punctuation set (incl. Indic danda `।॥`), NEVER a
@@ -82,9 +81,9 @@ they will drift unless one becomes canonical.
    `script_of(text)` Unicode-block script routing and a `normalize(text, lang=None)`
    convenience.
 5. **`languages/malayalam.py`** — full port: `_fix_chillu_conjuncts` (ൻ്റ→ന്റ, runs
-   first), indic-nlp chillu/ZWJ canonicalization with stdlib fallback, digit
+   first), indic-nlp chillu/ZWJ canonicalization (required — no fallback), digit
    verbalization (native Malayalam number words + sandhi glide യ), English↔Malayalam
-   number canonicalization. `INDIC_NLP_AVAILABLE` flag preserved.
+   number canonicalization. `INDIC_NLP_AVAILABLE` flag kept (always True) for importers.
 6. **Tests** — 20 tests incl. the crown-jewel regression pins and the ACL-2024-style
    self-normalization identity guardrail (word count + vowel-sign preservation).
 7. **`NORMALIZATION.md`** copied in as the design doc.
@@ -116,9 +115,8 @@ Ordered; the first is the reason the library was extracted.
 
 3. **Design-doc backlog items** (from `NORMALIZATION.md` → *Recommended order*), highest
    leverage first — these are the substantive normalizer improvements, not packaging:
-   - **C7 (fallback parity)** — port colon→visarga and two-part vowel-sign composition
-     into the stdlib fallback path so scoring is identical with/without indic-nlp. Cite
-     `NORMALIZATION.md` row C7 for exact rules + guard cases.
+   - **C7 (fallback parity) — DONE.** Resolved by making indic-nlp-library a hard
+     dependency (single code path). No further action.
    - **Guardrail test** already present here (`test_no_vanishing_vowels`); consider
      expanding the sentence basket.
    - **C1 (samvruthokaram / final-vowel drift)** and **W1 (sandhi/postposition
@@ -154,9 +152,11 @@ Ordered; the first is the reason the library was extracted.
   whisper_normalizer) handles this NFC-invisible, high-frequency conjunct. It must run
   **before** indic-nlp normalization. Pinned by `test_chillu_conjunct_fix`; don't break
   the ordering.
-- **indic-nlp-library is optional, not required.** Core must stay pure-stdlib (zero deps).
-  The Malayalam path has a stdlib fallback; keep both paths behaviourally equivalent
-  (this is exactly what C7 closes).
+- **indic-nlp-library is a REQUIRED dependency.** The Malayalam path calls it directly
+  (chillu/ZWJ, two-part vowels, colon→visarga) — there is no stdlib fallback. This is a
+  deliberate change (closes the old C7 parity gap: one code path, no environment-dependent
+  scoring). `base.py` / `universal.py` remain pure-stdlib; only the Malayalam plugin needs
+  indic-nlp.
 - **Python ≥ 3.9** (declared in `pyproject.toml`). Sandbox verification ran on 3.10.
 - **Number tables are Malayalam-specific and hand-curated** from real base-model output
   (spelling variants of English-in-Malayalam-script numbers). Extending to another
@@ -170,6 +170,6 @@ Ordered; the first is the reason the library was extracted.
 
 ```bash
 cd C:\Users\Paul\Projects\PythonProjects\indic-normalizer
-pip install -e ".[indic,dev]"      # or ".[dev]" to test the stdlib fallback path
+pip install -e ".[dev]"            # pulls indic-nlp-library (required) + pytest
 pytest -q                          # expect: 20 passed
 ```

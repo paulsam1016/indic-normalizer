@@ -15,14 +15,13 @@ design, coverage/gap analysis, and sources.
 ## Install
 
 ```bash
-pip install indic-normalizer            # core, pure stdlib, zero deps
-pip install "indic-normalizer[indic]"   # + indic-nlp-library for fullest Malayalam rules
+pip install indic-normalizer            # pulls indic-nlp-library (required)
 ```
 
 Editable, from a local checkout:
 
 ```bash
-pip install -e ".[indic,dev]"
+pip install -e ".[dev]"
 ```
 
 ## Usage
@@ -55,8 +54,8 @@ Applied identically to reference and hypothesis:
 
 - mis-encoded chillu-conjunct fix (`ൻ്റ → ന്റ`, NFC-invisible — **no other library does
   this**)
-- chillu / ZWJ-ZWNJ canonicalization (indic-nlp-library if installed, else a stdlib
-  fallback)
+- chillu / ZWJ-ZWNJ canonicalization, two-part vowel signs, colon→visarga (via
+  indic-nlp-library, a required dependency)
 - Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal
 - Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins
 - **English↔Malayalam number canonicalization** (`ട്വൻറ്റി ഫോർ`/`24`/`ഇരുപത്തിനാല്` all
