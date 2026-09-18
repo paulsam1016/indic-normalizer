@@ -1,12 +1,19 @@
 """Language registry + lightweight script detection.
 
-`get_normalizer(lang)` maps a language name/code to its ``(normalize_fn, source)``.
+`get_normalizer(lang, mode)` maps a language name/code to its ``(normalize_fn, source)``.
+The returned ``normalize_fn`` is a one-arg callable ``fn(text)`` with ``mode`` already
+bound, so existing callers keep working unchanged. ``mode`` is "eval" (default; aliases
+"training"/"fine-tune", model-facing verbalization) or "inference" (reader-facing ITN);
+see NORMALIZATION.md "Mode selector".
+
 Detection note: this library does NOT auto-detect *language* — script != language
 (Hindi/Marathi/Sanskrit all share Devanagari), and reliable language-ID needs a model.
 It DOES offer `script_of(text)`, a trivial Unicode-block check, so a caller that only
 needs script routing can do so without guessing. For ASR scoring you already know the
 language (it's the benchmark language), so pass it explicitly.
 """
+
+from functools import partial
 
 from . import universal
 
@@ -35,14 +42,26 @@ def _load(code):
     return None
 
 
-def get_normalizer(lang=None):
-    """``(normalize_fn, source)`` for ``lang``; the universal normalizer as fallback."""
+def get_normalizer(lang=None, mode="eval", segmentation=False):
+    """``(normalize_fn, source)`` for ``lang``/``mode``; universal normalizer as fallback.
+
+    ``normalize_fn`` is ``fn(text)`` with ``mode`` and ``segmentation`` bound. ``mode`` is
+    validated eagerly here (so a bad mode fails at ``get_normalizer`` time, not on first
+    call), then bound via ``functools.partial``. ``segmentation`` (eval-only, default OFF)
+    turns on the W3/W4/W5 boundary rules for languages that have them. The C1/C2/C6 CER folds
+    run automatically in eval mode (no flag).
+    """
+    base_fn, source = universal.normalize, "indic_normalizer.universal"
     code = _lang_code(lang)
     if code is not None:
         loaded = _load(code)
         if loaded is not None:
-            return loaded
-    return universal.normalize, "indic_normalizer.universal"
+            base_fn, source = loaded
+    # Validate the mode up front using the target module's resolver.
+    module = base_fn.__module__
+    import importlib
+    importlib.import_module(module)._resolve_mode(mode)
+    return partial(base_fn, mode=mode, segmentation=segmentation), source
 
 
 # --- optional: Unicode-block script detection (script routing, NOT language ID) ------

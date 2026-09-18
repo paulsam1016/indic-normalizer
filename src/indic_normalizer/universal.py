@@ -20,13 +20,40 @@ per-language modules (e.g. ``languages/malayalam.py``).
 
 from . import base
 
+# Two behaviours (see NORMALIZATION.md "Mode selector"): eval (model-facing) and inference
+# (reader-facing). "training"/"fine-tune" alias eval. The universal normalizer has no number
+# verbalization, so mode only governs the two shared reader-facing toggles it does have:
+# punctuation removal (E5) and lowercasing (E10).
+_EVAL_MODES = {"eval", "evaluation", "training", "train", "fine-tune", "finetune"}
+_INFER_MODES = {"inference", "infer", "itn"}
 
-def normalize(text: str) -> str:
-    """Script-, punctuation- and case-insensitive normalization (see module docstring)."""
+
+def _resolve_mode(mode) -> str:
+    m = str(mode or "eval").strip().lower()
+    if m in _INFER_MODES:
+        return "inference"
+    if m in _EVAL_MODES:
+        return "eval"
+    raise ValueError(
+        f"unknown mode {mode!r}; use 'eval' (aliases: training, fine-tune) or 'inference'"
+    )
+
+
+def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
+    """Script-, (mode-dependent) punctuation- and case-insensitive normalization.
+
+    mode="eval" (default; aliases "training"/"fine-tune") strips punctuation and lowercases;
+    mode="inference" preserves both for a readable transcript. Encoding/digit/whitespace
+    canonicalization is identical in both. ``segmentation`` is accepted for a uniform API but
+    has no effect here (the universal normalizer has no per-language rules).
+    """
+    mode = _resolve_mode(mode)
+    _ = segmentation  # accepted for API parity; universal has no W-family rules
     text = base.to_nfc(text)
     text = base.strip_unk(text)
     text = base.strip_zero_width(text)
     text = base.fold_digits(text)
-    text = base.strip_punct(text)
-    text = text.lower()
+    if mode == "eval":
+        text = base.strip_punct(text)     # E5
+        text = text.lower()               # E10
     return base.collapse_space(text)

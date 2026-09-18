@@ -46,3 +46,5 @@ Thumbs.db
 
 # Data (real call transcripts / eval corpus — kept out of version control)
 data/
+Claude outputs/
+outputs/
