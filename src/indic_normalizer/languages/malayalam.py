@@ -266,6 +266,85 @@ def _verbalize_digits(m: "re.Match[str]") -> str:
 _WORD2NUM = {_num_words(n): n for n in range(0, 10000)}
 _ONE2DIGIT = {w: str(i) for i, w in enumerate(_ONES)}
 
+# --- Greedy number-word parser (for fused numeral + suffix, and run-together numbers) ---
+# A number in real ASR output is often glued to a following suffix (നാലാം = 4th,
+# മുപ്പത്തിയല്ലേ = "thirty, isn't it") or run together (ഇരുനൂറ്റിയെണ്ണൂറ്റി...). The exact
+# _WORD2NUM map only matches a whole standalone token, so those slip through. This parser
+# walks a token left-to-right, matching number-word UNITS (reusing the forward tables),
+# summing their values exactly as _num_words composes them, and stops at the first
+# non-number remainder — which is kept as the suffix. Guarded so a token that does NOT begin
+# with a number unit (ഫ്രണ്ടിൽ "front", ആയിരിക്കും "will be") is never touched.
+_SIGN2VOWEL = {v: k for k, v in _V_SIGN.items() if v}   # vowel-sign -> independent vowel
+_VSIGNS = set("ാിീുൂൃെേൈൊോൌ")                            # dependent vowel signs
+
+
+def _number_units():
+    u = {}
+    for i, w in enumerate(_ONES):    u[w] = i
+    for i, w in enumerate(_TEENS):   u[w] = 10 + i
+    for i, w in enumerate(_TENS):    u[w] = (i + 2) * 10
+    for i, w in enumerate(_TENS_C):  u[w] = (i + 2) * 10
+    for i, w in enumerate(_HUNDS):   u[w] = (i + 1) * 100
+    for i, w in enumerate(_HUNDS_C): u[w] = (i + 1) * 100
+    for i, w in enumerate(_THOUS):   u[w] = (i + 1) * 1000
+    for i, w in enumerate(_THOUS_C): u[w] = (i + 1) * 1000
+    return u
+
+
+_NUM_UNITS = _number_units()
+_NUM_UKEYS = sorted(_NUM_UNITS, key=len, reverse=True)   # longest-first greedy
+
+
+def _match_unit_at(s: str, allow_stem: bool) -> "tuple[int, int] | None":
+    """Longest number unit at the start of ``s`` -> (value, chars_consumed_in_s), or None.
+    Handles the sandhi glide (യ before a vowel-initial unit) and, when ``allow_stem``, a
+    unit whose trailing samvruthokaram ് was replaced by a directly-attached vowel sign."""
+    for k in _NUM_UKEYS:
+        if s.startswith(k):
+            return _NUM_UNITS[k], len(k)
+    if s.startswith("യ"):                         # glide: യ + (vowel-sign) stood for an അ-/vowel-initial unit
+        rest = s[1:]
+        if rest and rest[0] in _SIGN2VOWEL:
+            cand, glide = _SIGN2VOWEL[rest[0]] + rest[1:], 2
+        else:
+            cand, glide = "അ" + rest, 1
+        for k in _NUM_UKEYS:
+            if cand.startswith(k):
+                return _NUM_UNITS[k], glide + (len(k) - 1)
+    if allow_stem:                                # unit's final ് replaced by an attached vowel sign (നാല് -> നാലാം)
+        for k in _NUM_UKEYS:
+            if (k.endswith(_VIRAMA) and len(k) >= 2 and s.startswith(k[:-1])
+                    and len(s) > len(k) - 1 and s[len(k) - 1] in _VSIGNS):
+                return _NUM_UNITS[k], len(k) - 1
+    return None
+
+
+def _parse_leading_number(core: str) -> "tuple[int, int] | None":
+    """(total_value, chars_consumed) for the numeral at the start of ``core``, or None.
+    Greedy additive composition mirroring _num_words; stem-match allowed only for the very
+    first unit (so a trailing ordinal/case vowel becomes part of the suffix, not the number)."""
+    i = total = 0
+    matched = False
+    while i < len(core):
+        m = _match_unit_at(core[i:], allow_stem=not matched)
+        if not m:
+            break
+        val, clen = m
+        total += val
+        i += clen
+        matched = True
+    return (total, i) if matched else None
+
+
+def _unglide(s: str) -> str:
+    """Restore a suffix's leading independent vowel if it was written as the glide യ(+sign)."""
+    if s.startswith("യ"):
+        rest = s[1:]
+        if rest and rest[0] in _SIGN2VOWEL:
+            return _SIGN2VOWEL[rest[0]] + rest[1:]
+        return "അ" + rest
+    return s
+
 
 # Peel leading/trailing punctuation off a token so a number word adjacent to punctuation
 # (e.g. "ഇരുപത്തിനാല്," or "(ഏഴ്)") still matches. Inference keeps punctuation, so the
@@ -303,14 +382,26 @@ def _itn_digit_by_digit(tokens: list) -> list:
 
 
 def _itn_token(tok: str) -> str:
-    """One token -> digits if its core is a (fused) native number word, else unchanged;
-    surrounding punctuation is preserved."""
+    """One token -> digits; surrounding punctuation preserved. A pure numeral becomes digits
+    (ഇരുപത്തിനാല് -> 24); a numeral fused with a suffix becomes ``digits-suffix`` (നാലാം ->
+    4-ാം, മുപ്പത്തിയല്ലേ -> 30-അല്ലേ); a token that doesn't start with a number is unchanged."""
     lead, core, trail = _peel(tok)
-    if core in _WORD2NUM:
-        return lead + str(_WORD2NUM[core]) + trail
-    if core in _ONE2DIGIT:
-        return lead + _ONE2DIGIT[core] + trail
-    return tok
+    if not core:
+        return tok
+    r = _parse_leading_number(core)
+    if r is None:
+        return tok
+    value, consumed = r
+    suffix = _unglide(core[consumed:])
+    # A stem-matched numeral strands its own samvruthokaram (ു / ു്) at the head of the
+    # remainder (നാലു -> "4" + "ു"); that vowel belongs to the number, not the suffix, so
+    # drop it. A real vowel-sign suffix like the ordinal ാം is NOT ു, so it is kept.
+    if suffix.startswith("ു" + _VIRAMA):
+        suffix = suffix[2:]
+    elif suffix.startswith("ു"):
+        suffix = suffix[1:]
+    body = str(value) + ("-" + suffix if suffix else "")
+    return lead + body + trail
 
 
 def _to_digits(text: str) -> str:

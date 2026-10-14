@@ -215,9 +215,39 @@ def test_c1_is_a_symmetric_scoring_fold():
 
 
 def test_c1_is_eval_only():
-    # C1 must NOT touch a reader-facing inference transcript (keeps the -u)
-    assert infer("നാലു") == "നാലു"
-    assert infer("ഒരു") == "ഒരു"
+    # The C1 samvruthokaram FOLD must not run in inference on a non-number word: അവനു
+    # ("to him") is not a numeral, so inference leaves it untouched (eval would fold -> അവന്).
+    assert infer("അവനു") == "അവനു"
+    assert norm("അവനു") == "അവന്"       # eval C1 fold still applies
+    # (നാലു IS the number four; inference ITN converts it to 4 — see test_itn_fused_*)
+
+
+# --- Inference ITN: fused numeral + suffix (greedy number-word parser) ----------------
+def test_itn_pure_numeral_to_digits():
+    assert infer("ഇരുപത്തിനാല്") == "24"
+    assert infer("അഞ്ഞൂറ്") == "500"
+    assert infer("നാലു") == "4"              # "four" with spoken samvruthokaram -> 4, no dangling -ു
+
+
+def test_itn_fused_ordinal():
+    assert infer("നാലാം") == "4-ാം"          # fourth
+    assert infer("മൂന്നാം") == "3-ാം"         # third
+
+
+def test_itn_fused_particle():
+    assert infer("മുപ്പത്തിയല്ലേ") == "30-അല്ലേ"   # "thirty, isn't it" (reverse glide restores അ)
+    assert infer("ഒന്നുകൂടെ") == "1-കൂടെ"         # stranded samvruthokaram dropped, suffix kept
+
+
+def test_itn_does_not_corrupt_real_words():
+    # words that merely CONTAIN a number substring but don't START with a number unit
+    for w in ["ഫ്രണ്ടിൽ", "ഫ്രണ്ടിലോട്ട്", "ആയിരിക്കും", "തമ്പാനൂറിന്റെ", "ഹലോ", "ഷെയറിങ്"]:
+        assert infer(w) == w, f"{w!r} should be untouched, got {infer(w)!r}"
+
+
+def test_itn_runon_components_summed():
+    # a run-together multi-component number composes additively (deterministic)
+    assert infer("ഇരുനൂറ്റിയെണ്ണൂറ്റിയൊമ്പത്") == "1009"   # 200+800+9
 
 
 # --- W3/W4/W5: segmentation rules (eval-only, opt-in via segmentation=True) -----------
