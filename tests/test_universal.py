@@ -33,7 +33,7 @@ def test_universal_inference_still_folds_digits_and_whitespace():
 
 
 def test_universal_mode_aliases():
-    for m in ("training", "fine-tune", "evaluation"):
+    for m in ("train", "training", "fine-tune", "evaluation"):
         assert normalize("Hello!", mode=m) == "hello"         # all behave like eval
 
 

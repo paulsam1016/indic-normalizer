@@ -23,9 +23,10 @@ Usage
 
 `get_normalizer(lang, mode)` returns ``(normalize_fn, source_label)``. A language with a
 dedicated normalizer (e.g. Malayalam) uses it; everything else falls back to the
-language-agnostic ``universal`` normalizer. ``mode`` is "eval" (default; aliases
-"training"/"fine-tune", model-facing verbalization) or "inference" (reader-facing ITN:
-numbers -> digits, punctuation + case preserved). See NORMALIZATION.md "Mode selector".
+language-agnostic ``universal`` normalizer. ``mode`` is "eval" (default; WER/CER
+scoring — numbers verbalized to native words), "train" (aliases "training", "fine-tune"; same but numbers
+left as written) or "inference" (reader-facing ITN: number words -> digits, punctuation + case
+preserved). See NORMALIZATION.md "Mode selector".
 
 Adding a language: drop ``languages/<lang>.py`` (exposing ``normalize(text, mode)``) and
 register its aliases in ``registry._ALIASES`` + a branch in ``registry._load``.
@@ -41,7 +42,7 @@ def normalize(text, lang=None, mode="eval", segmentation=False):
     """One-shot normalize ``text`` for ``lang``/``mode`` (universal normalizer if no lang).
 
     ``segmentation`` (eval-only, default OFF) enables the W3/W4/W5 boundary rules. The
-    C1/C2/C6 CER folds run automatically in eval mode.
+    C2/C6 CER folds run in every mode; C1 in eval only.
     """
     fn, _ = get_normalizer(lang, mode=mode, segmentation=segmentation)
     return fn(text)

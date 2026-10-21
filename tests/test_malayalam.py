@@ -30,31 +30,36 @@ def test_genuine_word_final_chillu_untouched():
     assert "ൻ" in out  # chillu-n preserved
 
 
-# --- E8: native digit verbalization --------------------------------------------------
+# --- E8 (eval): digits -> native words; train leaves numbers as written --------------
 @pytest.mark.parametrize("digits,expected", [
     ("24", "ഇരുപത്തിനാല്"),
     ("500", "അഞ്ഞൂറ്"),
-    ("21", "ഇരുപത്തിയൊന്ന്"),   # sandhi glide യ
+    ("21", "ഇരുപത്തിയൊന്ന്"),          # sandhi glide യ
+    ("007", "പൂജ്യം പൂജ്യം ഏഴ്"),       # zero-padded / id-like: digit by digit
 ])
-def test_digit_verbalization(digits, expected):
+def test_eval_digit_verbalization(digits, expected):
     assert norm(digits) == expected
 
 
-def test_id_like_digits_read_digit_by_digit():
-    # zero-padded / long runs -> digit by digit
-    assert norm("007") == "പൂജ്യം പൂജ്യം ഏഴ്"
+@pytest.mark.parametrize("text", ["24", "500", "007", "ഇരുപത്തിനാല്", "ട്വൻറ്റി ഫോർ"])
+def test_train_leaves_numbers_as_written(text):
+    assert train(text) == text
 
 
-def test_indic_digits_folded_then_verbalized():
-    assert norm("൨൪") == norm("24")  # Malayalam 24 -> same as ASCII 24
+def test_indic_digits_folded():
+    assert train("൨൪") == "24"          # E6 folds Malayalam digits in every mode
+    assert norm("൨൪") == norm("24")
 
 
 # --- E9: English-style number words -> canonical Malayalam ----------------------------
-def test_english_number_canonicalization():
-    # "24", English-in-Malayalam-script, and native Malayalam all collapse to one form
-    canonical = norm("24")
-    assert norm("ട്വൻറ്റി ഫോർ") == canonical
-    assert norm("ഇരുപത്തിനാല്") == canonical
+def test_english_number_canon_by_mode():
+    # eval: digits are verbalized, but English-style number words are left as written
+    assert norm("24") == norm("ഇരുപത്തിനാല്") == "ഇരുപത്തിനാല്"
+    assert norm("ട്വൻറ്റി ഫോർ") == "ട്വൻറ്റി ഫോർ"
+    # train: left as written
+    assert train("ട്വൻറ്റി ഫോർ") == "ട്വൻറ്റി ഫോർ"
+    # inference: all three meet as digits
+    assert infer("ട്വൻറ്റി ഫോർ") == infer("24") == infer("ഇരുപത്തിനാല്") == "24"
 
 
 def test_group_comma_collapsed():
@@ -65,9 +70,7 @@ def test_ambiguous_to_for_left_alone():
     # bare ടു / ഫോർ (English to/for) with no unambiguous number word must not convert to a
     # NUMBER word (E9). (C1 does fold the final ു -> ട്, but that's a separate rule; the point
     # here is only that it is NOT turned into രണ്ട്.)
-    out = norm("പ്ലസ് ടു")
-    assert "രണ്ട്" not in out    # not converted to the number two
-    assert out.split()[-1] == "ട്"   # E9 left it as the (C1-folded) word, not a numeral
+    assert infer("പ്ലസ് ടു") == "പ്ലസ് ടു"      # E9 (inference) leaves bare ടു alone
 
 
 # --- Guardrail: vanishing-vowels must NOT happen (ACL-2024 identity check) ------------
@@ -90,6 +93,7 @@ from indic_normalizer import normalize as _normalize
 from indic_normalizer.languages import malayalam as _mal
 
 infer, infer_src = get_normalizer("ml", mode="inference")
+train, _ = get_normalizer("ml", mode="train")
 
 
 def test_inference_registered_same_source():
@@ -97,14 +101,20 @@ def test_inference_registered_same_source():
 
 
 def test_default_mode_is_eval():
-    # get_normalizer("ml") with no mode == the eval verbalizing normalizer
-    assert norm("24") == "ഇരുപത്തിനാല്"
+    # get_normalizer("ml") with no mode == eval: punctuation stripped, numbers verbalized
+    assert norm("24 രൂപ.") == "ഇരുപത്തിനാല് രൂപ"
 
 
-@pytest.mark.parametrize("mode", ["eval", "evaluation", "training", "fine-tune"])
-def test_eval_aliases_verbalize(mode):
+@pytest.mark.parametrize("mode", ["eval", "evaluation"])
+def test_eval_aliases(mode):
     fn, _ = get_normalizer("ml", mode=mode)
-    assert fn("24") == "ഇരുപത്തിനാല്"        # all eval aliases -> native words
+    assert fn("24 രൂപ.") == "ഇരുപത്തിനാല് രൂപ"
+
+
+@pytest.mark.parametrize("mode", ["train", "training", "fine-tune", "finetune"])
+def test_train_aliases(mode):
+    fn, _ = get_normalizer("ml", mode=mode)
+    assert fn("24 രൂപ.") == "24 രൂപ"        # same canonicalization, numbers untouched
 
 
 # inference: every number convention -> digits
@@ -152,6 +162,7 @@ def test_verbalize_itn_roundtrip_all_values():
 
 def test_one_shot_normalize_mode():
     assert _normalize("24 രൂപ.", lang="ml") == "ഇരുപത്തിനാല് രൂപ"      # eval
+    assert _normalize("24 രൂപ.", lang="ml", mode="train") == "24 രൂപ"
     assert _normalize("24 രൂപ.", lang="ml", mode="inference") == "24 രൂപ."
 
 
@@ -162,10 +173,10 @@ def test_bad_mode_raises():
 
 # --- C-family CER folds: C6/C2 in BOTH modes; C1 eval-only ----------------------------
 
-# C6 homoglyph: ഠ used as zero inside a number -> 0 (then verbalized)
+# C6 homoglyph: ഠ used as zero inside a number -> 0
 def test_c6_homoglyph_in_number():
-    assert norm("1ഠ0") == norm("100")            # ഠ -> 0 -> നൂറ്
-    assert norm("1ഠ0") == "നൂറ്"
+    assert train("1ഠ0") == "100"
+    assert norm("1ഠ0") == "നൂറ്"                 # eval then verbalizes the 100
 
 
 def test_c6_standalone_letter_untouched():
@@ -230,13 +241,23 @@ def test_itn_pure_numeral_to_digits():
 
 
 def test_itn_fused_ordinal():
-    assert infer("നാലാം") == "4-ാം"          # fourth
-    assert infer("മൂന്നാം") == "3-ാം"         # third
+    assert infer("നാലാം") == "4-ാം"            # fourth
+    assert infer("മൂന്നാം") == "3-ാം"           # third
+    assert infer("പത്താം") == "10-ാം"           # tenth
+    assert infer("രണ്ടാമത്തെ") == "2-ാമത്തെ"    # second
+    assert infer("ഇരുപത്തിയൊന്നാം") == "21-ാം"  # 21st: ordinal on the last unit, after a glide
 
 
-def test_itn_fused_particle():
-    assert infer("മുപ്പത്തിയല്ലേ") == "30-അല്ലേ"   # "thirty, isn't it" (reverse glide restores അ)
-    assert infer("ഒന്നുകൂടെ") == "1-കൂടെ"         # stranded samvruthokaram dropped, suffix kept
+def test_itn_spoken_u_numeral():
+    assert infer("രണ്ടു") == "2"               # രണ്ടു ദിവസം "2 days"
+    assert infer("പത്തു") == "10"
+
+
+def test_itn_non_ordinal_fusions_left_as_words():
+    # ORDINALS ONLY: numeral-prefixed idioms are words, not numbers -> untouched
+    for w in ["ഒന്നും", "രണ്ടും", "ഒന്നുമില്ല", "ഒന്നിച്ച്", "ഒന്നുകിൽ", "ഒന്നെങ്കിൽ",
+              "രണ്ടുമൂന്ന്", "ഒന്നാണ്", "മുപ്പത്തിയല്ലേ", "ഒന്നുകൂടെ"]:
+        assert infer(w) == w, f"{w!r} should stay a word, got {infer(w)!r}"
 
 
 def test_itn_does_not_corrupt_real_words():
@@ -276,11 +297,9 @@ def test_w4_hyphenated_variants_converge():
 
 
 def test_w4_digit_hyphen_not_joined():
-    # a numeral + suffix (24-ന്) must NOT fuse — the number stays its own token so E8 can
-    # verbalize it cleanly (measured to hurt WER otherwise). Hyphen falls through to E5.
-    out = segnorm("24-ന്")
-    assert out == "ഇരുപത്തിനാല് ന്"          # number verbalized, suffix separate
-    assert "ഇരുപത്തിനാല്ന്" not in out        # NOT glued
+    # a numeral + suffix (24-ന്) must NOT fuse; the hyphen falls through to E5 as a separator
+    assert segnorm("24-ന്") == "ഇരുപത്തിനാല് ന്"           # eval: number verbalized, suffix separate
+    assert _mal.normalize("24-ന്", mode="train", segmentation=True) == "24-ന്"   # train keeps it (T1)
 
 
 # W3 single-letter acronym run collapse
@@ -319,11 +338,110 @@ def test_w5_non_adjacent_repeat_kept():
 
 
 def test_w5_does_not_eat_repeated_digit_words():
-    # E8 spells 007 digit-by-digit; W5 must NOT collapse the repeated പൂജ്യം
-    assert segnorm("007") == "പൂജ്യം പൂജ്യം ഏഴ്"
+    # a spoken digit-by-digit id ("zero zero seven") must keep both പൂജ്യം
+    assert segnorm("പൂജ്യം പൂജ്യം ഏഴ്") == "പൂജ്യം പൂജ്യം ഏഴ്"
+    assert segnorm("007") == "പൂജ്യം പൂജ്യം ഏഴ്"     # eval's own digit-by-digit output too
 
 
 def test_segmentation_ignored_in_inference():
     # segmentation has no effect in inference mode (reader-facing transcript kept intact)
     assert _mal.normalize("എ ടി എം വേഗം വേഗം", mode="inference", segmentation=True) \
         == "എ ടി എം വേഗം വേഗം"
+
+
+# --- Colon vs visarga, and inference leaving digits alone ------------------------------
+def test_punctuation_colon_is_not_visarga():
+    assert norm("ആണ്: ഷാങ്ഹായ്") == "ആണ് ഷാങ്ഹായ്"     # eval strips the colon
+    assert infer("പറ:") == "പറ:"                         # inference keeps it
+    assert "ഃ" not in infer("ആണ്: ഷാങ്ഹായ്")
+
+
+def test_midword_colon_is_visarga():
+    assert norm("ദു:ഖം") == "ദുഃഖം"                      # ':' typed for ഃ inside a word
+
+
+def test_inference_keeps_existing_digits():
+    assert infer("4:00-5:00") == "4:00-5:00"
+    assert infer("2950 × 18%") == "2950 × 18%"
+
+
+def test_train_mode_canonical_name():
+    assert _mal._resolve_mode("training") == "train"
+    assert _mal._resolve_mode("fine-tune") == "train"
+
+
+# --- Lakh grouping (E7), all modes ---------------------------------------------------
+def test_lakh_grouping_commas_removed_all_modes():
+    assert train("1,75,000 രൂപ") == "175000 രൂപ"
+    assert train("12,50,000") == "1250000"
+    assert train("70,000") == "70000"
+    assert train("1,000,000") == "1000000"
+    assert infer("1,75,000 രൂപ") == "175000 രൂപ"
+    assert train("1,2,3") == "1 2 3"          # a list, not a grouping
+
+
+# --- Train: C1 off, number-internal punctuation kept (T1) ---------------------------
+def test_train_keeps_samvruthokaram():
+    assert train("ഒരു കാര്യം പറഞ്ഞു") == "ഒരു കാര്യം പറഞ്ഞു"
+    assert norm("ഒരു കാര്യം പറഞ്ഞു") == "ഒര് കാര്യം പറഞ്ഞ്"
+
+
+def test_train_keeps_number_internal_punctuation():
+    assert train("4:00-5:00 വരെ.") == "4:00-5:00 വരെ"
+    assert train("2.5 ലക്ഷം, 70% ആയി") == "2.5 ലക്ഷം 70% ആയി"
+    assert train("23-ന് 8-9 ദിവസം") == "23-ന് 8-9 ദിവസം"
+    assert train("1/2") == "1/2"
+    assert train("ശരി. - അതെ") == "ശരി അതെ"     # ordinary punctuation still stripped
+
+
+def test_train_keeps_tags():
+    assert train("<unintelligible> ഹലോ") == "unintelligible ഹലോ"
+
+
+# --- Eval: large numbers read as numbers, tags removed ------------------------------
+def test_eval_thousands_and_lakhs():
+    assert norm("12000") == "പന്ത്രണ്ടായിരം"
+    assert norm("10000") == "പതിനായിരം"
+    assert norm("20000") == "ഇരുപതിനായിരം"
+    assert norm("25000") == "ഇരുപത്തിയഞ്ചായിരം"
+    assert norm("90000") == "തൊണ്ണൂറായിരം"
+    assert norm("12500") == "പന്ത്രണ്ടായിരത്തിയഞ്ഞൂറ്"
+    assert norm("200000") == "രണ്ട് ലക്ഷം"
+    assert norm("1,75,000") == "ഒര് ലക്ഷത്തി എഴുപത്തിയഞ്ചായിരം"   # ഒരു -> ഒര് via C1
+
+
+def test_eval_ids_still_digit_by_digit():
+    assert norm("12345678") == "ഒന്ന് രണ്ട് മൂന്ന് നാല് അഞ്ച് ആറ് ഏഴ് എട്ട്"
+    assert norm("01234") == "പൂജ്യം ഒന്ന് രണ്ട് മൂന്ന് നാല്"
+
+
+def test_eval_and_inference_remove_tags():
+    assert norm("<unintelligible> ഹലോ") == "ഹലോ"
+    assert infer("<unintelligible> ഹലോ.") == "ഹലോ."
+    assert norm("<noise> ശരി <unk>") == "ശരി"
+
+
+# --- Inference: lone ഒന്ന് only in numeric context (I1) ------------------------------
+def test_inference_lone_one_is_a_word():
+    assert infer("ഒന്ന് നോക്കിയിട്ട് പറയൂ") == "ഒന്ന് നോക്കിയിട്ട് പറയൂ"
+    assert infer("ഒന്നു ചെക്ക് ചെയ്യ്.") == "ഒന്നു ചെക്ക് ചെയ്യ്."
+
+
+def test_inference_lone_one_numeric_context():
+    assert infer("ഒന്ന് രൂപ") == "1 രൂപ"
+    assert infer("ഒന്ന് ഇയർ ആയി") == "1 ഇയർ ആയി"
+    assert infer("ഒന്ന് രണ്ട് മൂന്ന്") == "123"
+    assert infer("വൺ") == "1"
+
+
+# --- Train: AU length mark kept (T2), C2 not after a virama ------------------------
+def test_train_keeps_au_length_mark():
+    assert train("അക്കൗണ്ട്") == "അക്കൗണ്ട്"          # U+0D57 kept
+    assert train("അക്കൌണ്ട്") == "അക്കൗണ്ട്"          # two-part sign -> modern form
+    assert norm("അക്കൗണ്ട്") == norm("അക്കൌണ്ട്")     # eval: still the same either way
+
+
+def test_train_c2_not_after_virama():
+    assert train("ഹ്മ്") == "ഹ്മ്"
+    assert train("അവിടെയാണ് പണം") == "അവിടെയാണ് പണം"
+    assert train("വേണം വേണമ്") == "വേണം വേണം"         # ordinary word-final മ് still folds

@@ -2,8 +2,9 @@
 
 `get_normalizer(lang, mode)` maps a language name/code to its ``(normalize_fn, source)``.
 The returned ``normalize_fn`` is a one-arg callable ``fn(text)`` with ``mode`` already
-bound, so existing callers keep working unchanged. ``mode`` is "eval" (default; aliases
-"training"/"fine-tune", model-facing verbalization) or "inference" (reader-facing ITN);
+bound, so existing callers keep working unchanged. ``mode`` is "eval" (default; scoring —
+numbers verbalized), "train" (aliases "training", "fine-tune"; numbers left as written) or "inference"
+(reader-facing ITN);
 see NORMALIZATION.md "Mode selector".
 
 Detection note: this library does NOT auto-detect *language* — script != language

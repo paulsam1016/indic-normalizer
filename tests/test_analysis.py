@@ -53,7 +53,7 @@ def test_analyze_structure(fixture_file):
     # E12 (chillu conjunct) fires on the fixture's first line
     e12 = next(it for it in r.items if it.code == "E12")
     assert e12.lines_hit >= 1
-    # E8 (digit verbalization) fires on the "24" line
+    # E8 (digit verbalization, eval mode) fires on the "24" line
     e8 = next(it for it in r.items if it.code == "E8")
     assert e8.lines_hit >= 1
 

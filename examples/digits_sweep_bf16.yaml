@@ -1,0 +1,28 @@
+# Tune batching for bfloat16 (bf16 needs ~0.6 GB less GPU memory than f32, so larger batches may fit).
+#   uv run indic-digits sweep --config my.yaml --sweep-config examples/digits_sweep_bf16.yaml \
+#       eval_frozen <audio>/eval_frozen
+
+base:                                   # applied on top of my.yaml = the baseline of this sweep
+  compute_dtype: bfloat16
+  batch_size: 16
+  joint_chunk_frames: 16
+  encoder_batch_s: 30
+  group_audio_s: 300
+
+grid:                                   # smallest first; an OOM skips the larger values
+  batch_size: [8, 16, 24, 32, 48]
+  joint_chunk_frames: [8, 16, 24, 32, 64, 128]   # joint memory ~ batch_size x joint_chunk_frames
+  encoder_batch_s: [20, 30, 45, 60, 90, 120, 180, 240, 300]   # encoder memory ~ batch_size x encoder_batch_s
+  group_audio_s: [300, 900, 1800, 2400, 3600]   # group memory ~ batch_size x group_audio_s
+  # compute_dtype not swept: fixed by base
+
+greedy: true        # batch_size and joint_chunk_frames share memory: carry each best value forward
+max_changed: 3      # bf16 rounding depends on batch shape, so a few close-call picks can move between
+                    #   bf16 runs; accept a value if <= 3 of 1381 picks differ from the bf16 baseline
+min_gain: 0.03
+warmup_files: 2
+limit: null
+out_root: outputs/sweep_bf16/eval_frozen
+hyps_dirs:
+  - base_hypotheses-streaming
+  - base_hypotheses-segment

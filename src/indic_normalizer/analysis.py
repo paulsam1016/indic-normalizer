@@ -195,25 +195,29 @@ def _hits_indic_digit(t: str) -> "list[Hit]":
 
 
 def _hits_group_comma(t: str) -> "list[Hit]":
-    return _hits_by_word(t, lambda w: bool(_GROUP_COMMA.search(w)),
-                         lambda w: _GROUP_COMMA.sub("", w))
+    return [Hit(m.group(0), m.group(0).replace(",", "")) for m in _ml._GROUP_COMMA.finditer(t)
+            if "," in m.group(0)]
+
+
+def _hits_tags(t: str) -> "list[Hit]":
+    return [Hit(m.group(0), "∅") for m in _ml._TAG.finditer(t)]
 
 
 def _hits_digit_verbalize(t: str) -> "list[Hit]":
     # words containing an ASCII digit run (after fold + comma strip) that E8 verbalizes
     def fix(w):
-        w2 = _GROUP_COMMA.sub("", base.fold_digits(w))
+        w2 = _ml._drop_group_commas(base.fold_digits(w))
         return _ml._NUM_RE.sub(_ml._verbalize_digits, w2)
     return _hits_by_word(
         t,
-        lambda w: bool(_ASCII_DIGIT_RUN.search(_GROUP_COMMA.sub("", base.fold_digits(w)))),
+        lambda w: bool(_ASCII_DIGIT_RUN.search(base.fold_digits(w))),
         fix,
     )
 
 
 def _hits_en_numbers(t: str) -> "list[Hit]":
     """Each run of English-in-Malayalam-script number words E9 converts -> one Hit
-    (the whole run before → its canonical Malayalam)."""
+    (the whole run before → the digits inference mode emits for it)."""
     words = t.split()
     out, i = [], 0
     while i < len(words):
@@ -222,7 +226,7 @@ def _hits_en_numbers(t: str) -> "list[Hit]":
             j += 1
         if j > i and any(words[k] in _EN_STRONG for k in range(i, j)):
             run = " ".join(words[i:j])
-            after = _ml._canonicalize_en_numbers(run)
+            after = _ml._to_digits(_ml._canonicalize_en_numbers(run))
             if after != run:
                 out.append(Hit(run, after))
             i = j
@@ -337,16 +341,18 @@ def _handled_items() -> list[Item]:
         Item("E4", "handled", "CER", "Zero-width (ZWNJ/ZWJ/BOM) drop", _hits_zero_width),
         Item("E5", "handled", "CER+WER", "ASCII + Indic punctuation removal", _hits_punct),
         Item("E6", "handled", "CER", "Indic digit → ASCII", _hits_indic_digit),
-        Item("E7", "handled", "CER+WER", "Digit-grouping commas (70,000→70000)",
+        Item("E7", "handled", "CER+WER", "Digit-grouping commas incl. lakh (70,000 / 1,75,000)",
              _hits_group_comma),
-        Item("E8", "handled", "WER+CER", "Native digit verbalization (24→ഇരുപത്തിനാല്)",
+        Item("E8", "handled", "WER+CER", "Digit verbalization incl. thousands/lakhs (24→ഇരുപത്തിനാല്) [eval mode]",
              _hits_digit_verbalize),
-        Item("E9", "handled", "WER+CER", "English↔Malayalam number canonicalization",
+        Item("E9", "handled", "WER+CER", "English-style number words → digits [inference mode]",
              _hits_en_numbers),
         Item("E10", "handled", "CER", "Lowercasing (code-mixed Latin)", _hits_lower),
         Item("E11", "handled", "WER", "Whitespace collapse + trim", _hits_whitespace),
         Item("E12", "handled", "CER", "Mis-encoded chillu conjunct (ൻ്റ→ന്റ)",
              _hits_chillu_conj),
+        Item("E13", "handled", "WER", "Annotation tags (<unintelligible>) [eval + inference]",
+             _hits_tags),
     ]
 
 
@@ -810,33 +816,40 @@ def _score_text_stdlib(hyps: list, refs: list) -> dict:
 # necessary for the recovery, so X is credited. This mirrors the real normalize() (steps
 # reference the malayalam module's own functions), so it can't drift from it.
 
-def _ml_steps(segmentation: bool = False):
+def _ml_steps(segmentation: bool = False, mode: str = "eval"):
     """Ordered (E-code, step_fn) list mirroring malayalam.normalize(). Each step_fn maps
     str->str. Built lazily so importing analysis never forces the malayalam import. The CER
-    folds C6/C2/C1 are always present (they run in every eval normalize); when ``segmentation``
+    folds C6/C2 are always present; C1, E8 and E13 are eval-only steps and T1 is train-only; when ``segmentation``
     is True the opt-in W4/W3/W5 boundary rules are also included, so recovery attribution
     matches the pipeline actually run."""
     _m = _ml
     steps = [
         ("E12", _m._fix_chillu_conjuncts),
-        ("E2",  _m._IND_NORM.normalize),
+        ("E2",  lambda t: _m._IND_NORM.normalize(_m._COLON_PUNCT.sub(_m._COLON_HOLD, t))
+                          .replace(_m._COLON_HOLD, ":")),
         ("E1",  lambda t: unicodedata.normalize("NFC", t)),
         ("E3",  lambda t: _m._UNK.sub(" ", t)),
         ("E4",  lambda t: _m._ZW.sub("", t)),
         ("E6",  lambda t: "".join(_m._DIGITS.get(c, c) for c in t)),
         ("C6",  _m._fix_homoglyphs),          # ഠ->0 in a number (shared base; both modes)
-        ("C2",  _m._fold_final_nasal),        # word-final മ് -> ം (shared base; both modes)
-        ("E7",  lambda t: _m._GROUP_COMMA.sub("", t)),
+        *([("T2", _m._restore_au_length_mark)] if mode == "train" else []),   # ൌ -> ൗ (train)
+        ("C2",  _m._fold_final_nasal_train if mode == "train" else _m._fold_final_nasal),
+        ("E7",  _m._drop_group_commas),       # 70,000 / 1,75,000 -> one digit run
     ]
+    if mode != "train":
+        steps.append(("E13", lambda t: _m._TAG.sub(" ", t)))   # <unintelligible>-style tags
+    else:
+        steps.append(("T1", _m._protect_num_punct))            # 4:00-5:00, 2.5, 70%, 23-ന് survive E5
     if segmentation:
         steps.append(("W4", _m._join_intra_word_hyphen))   # before E5 (which eats the hyphen)
     steps += [
-        ("E5",  lambda t: _m._PUNCT.sub(" ", t)),
-        ("E9",  _m._canonicalize_en_numbers),
-        ("E8",  lambda t: _m._NUM_RE.sub(_m._verbalize_digits, t)),
-        ("E10", lambda t: t.lower()),
-        ("C1",  _m._fold_samvruthokaram),     # word-final ...ു്/...ു -> ...് (eval only)
+        ("E5",  lambda t: _m._PUNCT.sub(" ", t).translate(_m._NUM_PUNCT_RESTORE)),
     ]
+    if mode == "eval":                                   # E8: eval only (not train)
+        steps += [("E8",  lambda t: _m._NUM_RE.sub(_m._verbalize_digits, t))]
+    steps += [("E10", lambda t: t.lower())]
+    if mode == "eval":                                   # C1: eval only (train keeps spelling)
+        steps += [("C1",  _m._fold_samvruthokaram)]
     if segmentation:
         steps.append(("W3", _m._collapse_letter_runs))     # after E5/E10 (split tokens)
         steps.append(("W5", _m._collapse_reduplication))
@@ -933,11 +946,12 @@ def compare(file_a: str, file_b: str, lang: str = "ml",
         n = min(n, limit)
 
     norm_fn, _ = get_normalizer(lang, mode=norm_mode, segmentation=segmentation)
-    # Recovery attribution ablates the EVAL pipeline (WER/CER convergence is an eval-mode
-    # concept); it is not meaningful on inference/ITN output, so it only runs in eval mode.
-    # The step list matches the segmentation flag so W3/W4/W5 are attributable when enabled.
-    steps = (_ml_steps(segmentation=segmentation)
-             if (norm_mode == "eval" and lang in ("ml", "mal", "malayalam")) else None)
+    # Recovery attribution ablates the pipeline step by step. It runs for eval and train
+    # (canonicalizing modes, each with its own step list); it is not meaningful on
+    # inference/ITN output. The step list matches the mode and segmentation flag.
+    _mode = _ml._resolve_mode(norm_mode) if lang in ("ml", "mal", "malayalam") else None
+    steps = (_ml_steps(segmentation=segmentation, mode=_mode)
+             if _mode in ("eval", "train") else None)
     refs_raw, hyps_raw, refs_norm, hyps_norm = [], [], [], []
     blank_pairs = 0
     lines_equal, lines_still = [], []               # raw ref+hyp lines, by outcome
@@ -1193,10 +1207,11 @@ def main(argv=None):
                         "compare, paired by line order.")
     p.add_argument("--lang", default="ml", help="language code (default: ml).")
     p.add_argument("--norm-mode", default="eval",
-                   choices=["eval", "training", "fine-tune", "inference"],
-                   help="normalizer mode: eval (default; model-facing verbalization, "
-                        "aliases training/fine-tune) or inference (reader-facing ITN — "
-                        "numbers to digits, punctuation/case preserved).")
+                   choices=["eval", "train", "training", "fine-tune", "inference"],
+                   help="normalizer mode: eval (default; WER/CER scoring — numbers "
+                        "verbalized to native words), train (aliases training/fine-tune; same but "
+                        "numbers left as written) or inference (reader-facing ITN — number "
+                        "words to digits, punctuation/case preserved).")
     p.add_argument("--segmentation", action="store_true",
                    help="enable the opt-in W3/W4/W5 boundary rules (eval only; OFF by "
                         "default — measured net-neutral-to-negative on the sample corpora).")
@@ -1256,9 +1271,9 @@ def _run_analyze(args):
 
 def _run_compare(args):
     out = args.out or "wer_cer_compare.html"
-    if args.norm_mode != "eval":
-        print("  note: compare/WER-CER scoring uses eval-mode normalization; "
-              f"--norm-mode={args.norm_mode} still runs but recovery attribution is eval-only.")
+    if args.norm_mode == "inference":
+        print("  note: WER/CER is normally scored in eval mode; --norm-mode=inference still "
+              "runs but recovery attribution is skipped (not meaningful on ITN output).")
     r = compare(args.inputs[0], args.inputs[1], lang=args.lang, limit=args.limit,
                 norm_mode=args.norm_mode, segmentation=args.segmentation)
     render_compare_html(r, out)

@@ -62,6 +62,68 @@ Applied identically to reference and hypothesis:
   collapse to one form)
 - lowercase (code-mixed English), whitespace collapse
 
+## Digits module (`indic_normalizer.digits`)
+
+A separate part of the package for **digit normalization**: it turns numbers in text into the
+words that are spoken, e.g. for training targets (the core normalizer leaves digits alone in
+`train` mode). Core behaviour is unchanged by it.
+
+```python
+from indic_normalizer import digits
+
+digits.verbalize("ഫീസ് 1,75,000 ആണ്, 4:00-5:00 വരെ")
+# 'ഫീസ് ഒരു ലക്ഷത്തി എഴുപത്തയ്യായിരം ആണ്, നാല് മണി അഞ്ച് മണി വരെ'
+
+digits.find("70% ആയി")          # [NumberSpan(core='70%', cls='percent', token_index=0, ...)]
+digits.candidates("2.5")         # രണ്ടര / രണ്ട് പോയിന്റ് അഞ്ച് / ടു പോയിന്റ് ഫൈവ്
+```
+
+It detects and classifies numbers (date, time, time range, percent, currency, phone, range,
+grouped, decimal, ordinal, year, ID, numeral + suffix, alphanumeric) and lists the plausible
+readings for each: native Malayalam (contracted `ഇരുപത്തഞ്ച്` by default, or glide
+`ഇരുപത്തിയഞ്ച്` with `style="glide"`), English words in Malayalam script (`ട്വന്റി ഫൈവ്`), and
+class-specific forms (`രണ്ടര`, `ആറേമുക്കാൽ`, `ഇരുപത്തിമൂന്നിന്`). A digit doesn't record how it
+was said, so `verbalize(text, chooser=fn)` lets you pick per number — e.g. score each candidate
+with an ASR model on that word's audio (`span.token_index` matches word-timestamp lists).
+Without a chooser the first (native) reading is used. Output never contains digits or number
+punctuation.
+
+### Choosing readings from the audio (optional extra)
+
+```bash
+pip install "indic-normalizer[digits] @ git+https://github.com/paulsam1016/indic-normalizer"
+# torch / NeMo: install the builds matching your CUDA if pip's defaults don't fit
+```
+
+A plain `pip install indic-normalizer` installs only the core dependencies; the text-only digits
+functions above work without the extra. The extra adds numpy, PyYAML, soundfile, torch and
+NeMo for scoring each candidate reading against the audio with a NeMo hybrid RNN-T (TDT) / CTC
+model (negative log-likelihood of the candidate text; lowest wins).
+
+```bash
+cp examples/digits_scoring.yaml my.yaml        # set model_path, cuda, compute_dtype, batch_size, ...
+# compare the 4 methods (tdt|ctc head x segment|word unit) on a dir, optionally vs base-model hyps
+indic-digits check   --config my.yaml DATA_DIR AUDIO_DIR      # model sanity check, run first
+indic-digits compare --config my.yaml DATA_DIR AUDIO_DIR --hyps-dir base_hypotheses-streaming --hyps-dir base_hypotheses-segment
+# verbalize -> OUT_DIR/<data dir name>/ (out_dir in the config, or --out-dir):
+#   verbalized/<stem>.json  input schema (transcription / words / sentences), texts verbalized
+#   verify/<stem>.json      confident numbers verbalized, uncertain ones still digits (verify.tsv: pending)
+#   failed/<stem>.json      input, unchanged: could not be processed     (details: failed.tsv)
+#   verbalized.tsv, summary.json, report.html
+# check verify/ + failed/ in the browser (no GPU; Windows or Linux):
+indic-digits verifier
+indic-digits verbalize --config my.yaml DATA_DIR AUDIO_DIR
+# speed: change batch_size / joint_chunk_frames / encoder_batch_s / group_audio_s one at a time,
+# run compare for each, report time / peak GPU memory / changed picks -> outputs/sweep/<dir>/sweep.html
+indic-digits sweep --config my.yaml --sweep-config examples/digits_sweep.yaml DATA_DIR AUDIO_DIR
+indic-digits sweep --config my.yaml --sweep-config examples/digits_sweep_dtype.yaml DATA_DIR AUDIO_DIR  # f32 vs bf16
+indic-digits stats DATA_DIR                     # digit / special-character distribution report
+indic-digits text "ഫീസ് 1,75,000 ആണ്" --candidates
+```
+
+`DATA_DIR` holds one JSON per recording (`sentences` with `text`/`start_time`/`end_time`, and
+`words` with timestamps, like eval_frozen); `AUDIO_DIR` holds `<same name>.wav`.
+
 ## Language auto-detection?
 
 **No** — `get_normalizer` takes an explicit language. Script ≠ language

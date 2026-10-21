@@ -111,67 +111,94 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
 | # | Item | Effect | Complexity | Notes |
 |---|------|--------|:----------:|-------|
 | E1 | Unicode NFC | CER | ★ trivial | Canonical composition — stdlib `unicodedata.normalize`. |
-| E2 | Chillu / ZWJ-ZWNJ canonicalization | CER | ★ trivial | One call into indic-nlp-library (a required dependency); the library does the work. |
+| E2 | Chillu / ZWJ-ZWNJ canonicalization | CER | ★ trivial | One call into indic-nlp-library (a required dependency); the library does the work. Punctuation colons are shielded from its colon→visarga rewrite (see Mode selector, colon guard). |
 | E3 | `⁇` / `<unk>` removal | CER + WER | ★ trivial | OOV marker; fixed-string removal from both sides. |
 | E4 | Zero-width (ZWNJ/ZWJ/BOM) drop | CER | ★ trivial | Fixed codepoint set stripped, after the chillu fix. |
 | E5 | ASCII + Indic punctuation removal | CER + WER | ★ trivial | One character-class regex; includes danda `।` `॥`, quotes, dashes. |
 | E6 | Indic-digit → ASCII (`൦-൯`→`0-9`) | CER | ★ trivial | Fixed 10-codepoint translation table. Feeds verbalization. |
-| E7 | Digit-grouping commas (`70,000`→`70000`) | CER + WER | ★★ easy | Regex, but must fire before `,`→space so both surface forms meet — ordering-sensitive. |
-| E8 | Native digit verbalization (`24`→`ഇരുപത്തിനാല്`) | WER + CER | ★★★★ hard | Bespoke number-to-Malayalam-words logic: 1–4 digit runs read as a number, longer/zero-padded read digit-by-digit, with the sandhi glide `യ` inserted at joins. |
-| E9 | English-style number words → canonical Malayalam (`ട്വൻറ്റി ഫോർ`→`ഇരുപത്തിനാല്`) | WER + CER | ★★★★ hard | Convention-invariant scoring: a spelling-tolerant word parser, with ambiguous `ടു`/`ഫോർ` converted only beside an unambiguous number word, and lakh units mapped. |
+| E7 | Digit-grouping commas, Western **and Indian lakh** (`70,000`, `1,75,000`→`175000`) | CER + WER | ★★ easy | Regex over the whole grouped number (`1,2,3` lists untouched); must fire before `,`→space so both surface forms meet — ordering-sensitive. The old 3-digit-only rule split `1,75,000` into `1 75000` (24× on eval_frozen). |
+| E8 | Native digit verbalization (`24`→`ഇരുപത്തിനാല്`) | WER + CER | ★★★★ hard | Bespoke number-to-Malayalam-words logic: runs up to 7 digits are read as a number — thousands fused (`12000`→`പന്ത്രണ്ടായിരം`, `20000`→`ഇരുപതിനായിരം`, `12500`→`പന്ത്രണ്ടായിരത്തിയഞ്ഞൂറ്`), lakhs as a spaced word the way ASR writes them (`200000`→`രണ്ട് ലക്ഷം`, `175000`→`ഒരു ലക്ഷത്തി എഴുപത്തിയഞ്ചായിരം`); 8+ digits or a leading zero (phones, IDs) read digit-by-digit; sandhi glide `യ` at joins. **`eval` mode only.** |
+| E9 | English-style number words → canonical Malayalam (`ട്വൻറ്റി ഫോർ`→`ഇരുപത്തിനാല്`) | WER + CER | ★★★★ hard | Convention-invariant scoring: a spelling-tolerant word parser, with ambiguous `ടു`/`ഫോർ` converted only beside an unambiguous number word, and lakh units mapped. **`inference` mode only** (→ digits); not in `eval` or `train`. |
 | E10 | Lowercasing | CER | ★ trivial | `str.lower()`, for code-mixed Latin tokens. |
 | E11 | Whitespace collapse + trim | WER | ★ trivial | One regex: multiple spaces → one. |
+| E13 | Annotation tags (`<unintelligible>`, `<noise>`) | WER | ★ trivial | Whole tag dropped; E5 alone would leave the tag name as a fake word (123 in dataset refs). **`eval` + `inference`**; `train` leaves tags to the data pipeline. |
 | E12 | Mis-encoded chillu conjunct (`ൻ്റ`→`ന്റ`; also `ൺ ർ ൽ ൾ ൿ` before virama) | CER | ★★★ moderate | Small closed map, but built on a real insight and guarded: a chillu + virama is not a real chillu — it's the base consonant typed with the wrong codepoint (`വിവേകാനന്ദൻ്റെ` vs `വിവേകാനന്ദന്റെ`), NFC-invisible. Rewritten to the base-consonant form; genuine word-final chillu (no following virama) left untouched. First step in `malayalam.normalize()` (`_fix_chillu_conjuncts`). |
 
 ---
 
-## Mode selector — `eval` vs `inference`
+## Mode selector — `eval` / `train` / `inference`
 
-`normalize()` takes a **`mode`** argument. There are **two behaviours**, four accepted names:
-`mode="eval"` (**default**) with `"training"` and `"fine-tune"` as aliases, and
-`mode="inference"`. The two express opposite *contracts*:
+`normalize()` takes a **`mode`** argument with **three behaviours**:
 
-- **`eval` (model-facing)** — used for WER/CER scoring **and** for building training / fine-tune
-  targets. Aggressive canonicalization: strip everything that isn't signal, and render every
-  number as **native Malayalam words** (`24` → `ഇരുപത്തിനാല്`). Most ASR tokenizers have no
-  `0–9` pieces, so a digit in a target becomes `<unk>` and teaches the model to emit `⁇`;
-  verbalizing avoids that. This is the current behaviour, unchanged.
-- **`inference` (reader-facing)** — used on the model's **output**, shown to a human. It does
-  **ITN** (inverse text normalization): every number → **digits** (`ഇരുപത്തിനാല്` → `24`,
-  `ട്വൻറ്റി ഫോർ` → `24`), and it **preserves** punctuation and letter case so the transcript
-  reads naturally (`50,000 രൂപ`, not `50000 രൂപ`).
+- **`eval`** (**default**; alias `evaluation`) — **WER/CER scoring.** Aggressive, symmetric
+  canonicalization applied to reference *and* hypothesis so only real recognition errors count.
+  Digits are verbalized to **native Malayalam words** (`24` → `ഇരുപത്തിനാല്`) so digit references
+  meet word hypotheses: call references write numbers as digits (1,659 digit runs) while the ASR
+  always writes words (0 digit runs) — without E8 calls WER rises 26.1 → 29.6. English-style
+  number words (`ട്വൻറ്റി ഫോർ`) are **left as written** in eval (E9 dropped; measured cost +0.21
+  WER calls, +0.10 dataset).
+- **`train`** (aliases `training`, `fine-tune`, `finetune`) — **training / fine-tune targets.**
+  Like `eval`, but numbers are not rewritten (no E8) — digit verbalization for targets is
+  handled outside this library — and three things are kept for that external verbalizer and
+  for spelling fidelity:
+  - **T1 number-internal punctuation survives E5**: `4:00-5:00`, `2.5`, `70%`, `1/2`, `23-ന്`,
+    `8-9` (eval_frozen: 77 times, 23 decimals, 31 percents, 179 numeral-suffixes, 30 ranges,
+    11 slashes). Ordinary punctuation is still stripped.
+  - **No C1 fold** — a target keeps its real spelling (`ഒരു`, `പറഞ്ഞു`); C1 used to rewrite
+    4–5.6% of target words.
+  - **Tags are not removed** (handled upstream).
+  - **T2 AU length mark kept**: indic-nlp rewrites `ൗ` (U+0D57, `അക്കൗണ്ട്`) as the two-part
+    `ൌ` (U+0D4C); train maps it back. Same sound, but the sravaani tokenizer ranks `ൗ` as the
+    more frequent piece (eval_frozen: 215 `ൗ`, 0 `ൌ`). Eval is unaffected (symmetric).
+  - **C2 guarded**: word-final `മ്`→`ം` is skipped right after a virama, so the filler `ഹ്മ്`
+    is not turned into the malformed `ഹ്ം`.
+  (Note: the sravaani tokenizer has no `0–9`, `-`, `%` pieces, so anything the external
+  verbalizer leaves unverbalized becomes `<unk>`.)
+- **`inference`** (aliases `infer`, `itn`) — **reader-facing output (ITN).** Keeps punctuation
+  and case; number *words* become digits (`ഇരുപത്തിനാല്`→`24`, `ട്വൻറ്റി ഫോർ`→`24`,
+  ordinals `നാലാം`→`4-ാം`); digits already present are left exactly as written
+  (`4:00-5:00`, `2950 × 18%`). **I1:** a standalone `ഒന്ന്`/`ഒന്നു` is usually the softener
+  "just/once" (`ഒന്ന് നോക്ക്`, `ഒന്ന് ചെക്ക് ചെയ്യ്`), so it becomes `1` only in numeric context —
+  a neighbouring number, or a following unit/counter (`രൂപ`, `ദിവസം`, `വർഷം`, `ഇയർ`, `ലാക്`,
+  `മിനിറ്റ്` …). On the call hypotheses this cut lone `1`s from 535 to 60.
 
-A shared **canonicalization base** runs identically in both modes (encoding fixes, NFC,
-zero-width drop, Indic→ASCII digits, whitespace) — the two contracts only differ on the four
-split steps and on number *direction*.
+A shared **canonicalization base** runs identically in all three modes.
 
-| Step | `eval` / `training` / `fine-tune` (model-facing) | `inference` (reader-facing) | Split? |
-|------|--------------------------------------------------|-----------------------------|:------:|
-| E12 chillu-conjunct fix (`ൻ്റ`→`ന്റ`) | applied | applied | — shared |
-| E2 chillu / ZWJ canonicalization | applied | applied | — shared |
-| E1 Unicode NFC | applied | applied | — shared |
-| E4 zero-width drop (ZWNJ/ZWJ/BOM) | applied | applied | — shared |
-| E6 Indic-digit → ASCII (`൨൪`→`24`) | applied | applied | — shared |
-| E3 `<unk>` / `⁇` removal | stripped | stripped | — shared¹ |
-| E11 whitespace collapse + trim | applied | applied | — shared |
-| **E5 punctuation removal** (incl. group-comma) | **strip all** | **keep** (punctuation is part of a readable transcript, and lives inside numbers: `50,000`, `4.5`, `10:30`) | **✅** |
-| **E10 lowercasing** | **lowercase** (case-insensitive scoring) | **preserve case** | **✅** |
-| **E8 digit verbalization** | **digits → native words** (`24`→`ഇരുപത്തിനാല്`) | **native words → digits** (ITN: `ഇരുപത്തിനാല്`→`24`) | **✅** |
-| **E9 English-number canonicalization** | **→ native words** (`ട്വൻറ്റി ഫോർ`→`ഇരുപത്തിനാല്`) | **→ digits** (`ട്വൻറ്റി ഫോർ`→`24`; front-half value parse kept, back-half emits `str(value)`) | **✅** |
-| C6 homoglyph (`ഠ`→`0` in a number) | applied | applied | — shared (unambiguous) |
-| C2 word-final `മ്`→`ം` | applied | applied | — shared (unambiguous) |
-| **C1 samvruthokaram fold** (`നാലു`→`നാല്`) | **applied** (symmetric scoring fold) | **off** — would strip a real `-u` from a reader transcript | **✅** |
-| W1–W5, C9–C16 (future gap rules) | apply (scoring canonicalization) | **off** — collapsing register / segmentation variants would *degrade* a human transcript | **✅ by nature** |
+| Step | `eval` | `train` | `inference` |
+|------|--------|------------|-------------|
+| E12 chillu-conjunct fix (`ൻ്റ`→`ന്റ`) | ✓ | ✓ | ✓ |
+| E2 chillu / ZWJ canonicalization (indic-nlp)¹ | ✓ | ✓ | ✓ |
+| E1 NFC · E3 `<unk>`/`⁇` drop · E4 zero-width drop | ✓ | ✓ | ✓ |
+| E13 annotation tags (`<unintelligible>`) | drop | — (kept) | drop |
+| E6 Indic-digit → ASCII (`൨൪`→`24`) | ✓ | ✓ | ✓ |
+| C6 homoglyph `ഠ`→`0` inside a number | ✓ | ✓ | ✓ |
+| T2 AU length mark `ൌ`→`ൗ` (undo indic-nlp) | — | ✓ | — |
+| C2 word-final `മ്`→`ം` | ✓ | ✓ (not after a virama) | ✓ |
+| E7 digit-grouping comma (`70,000`, `1,75,000`→`175000`) | ✓ | ✓ | ✓ |
+| **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
+| **E5 punctuation removal** | strip | strip | **keep** |
+| **E9 English-number words** | — (left as written) | — (left as written) | **→ digits** (via native words + ITN) |
+| **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit) | — (left as digits) | — (left as digits) |
+| **ITN number words → digits** | — | — | **✓** (ordinals only for fused suffixes; lone `ഒന്ന്` only in numeric context) |
+| **E10 lowercase** | ✓ | ✓ | **keep case** |
+| **C1 samvruthokaram fold** (`നാലു`→`നാല്`) | ✓ | — (target keeps real spelling) | — (would strip a real `-u` for a reader) |
+| W3/W4/W5 segmentation (`segmentation=True`, default off) | opt-in | opt-in | — |
+| E11 whitespace collapse | ✓ | ✓ | ✓ |
 
-¹ `<unk>`/`⁇` is **stripped in both modes** for now (it was not in the requested split set). If a
-future need arises to surface model uncertainty to the reader, inference could instead map it to
-a neutral marker (e.g. `[?]`) — noted as an open option, not implemented.
+¹ **Colon guard.** indic-nlp rewrites any `:` after a Malayalam letter as the visarga `ഃ`. That
+is only right *inside* a word (`ദു:ഖം` → `ദുഃഖം`). A colon followed by a space / end / non-letter
+is punctuation (`ആണ്: …`, `പറ:`) and is protected from indic-nlp, so eval/train strip it and
+inference keeps it. On the eval_frozen set this removed 12 spurious visargas (12 → 0).
 
-**Design note.** It is not eleven independent toggles — it is **two contracts** sitting on one
-shared canonicalization base. `eval`/`training`/`fine-tune` are the *same* behaviour (aliases);
-only `inference` flips the four split steps and reverses number direction. Number *canon* still
-runs in inference (English-style number words resolve to a value first), so all conventions —
-`24`, `ട്വൻറ്റി ഫോർ`, `ഇരുപത്തിനാല്` — converge on clean digits on output.
+**Inference ITN details.** The parser composes number-word units greedily (round-trips all
+values 0–9999). A numeral fused with a suffix is converted **only for the ordinal family**
+(`ാം`, `ാമത്`, `ാമത്തെ`, …: `പത്താം`→`10-ാം`, `ഇരുപത്തിയൊന്നാം`→`21-ാം`); other fusions are
+idioms, not numbers (`ഒന്നും` "anything", `രണ്ടും` "both", `ഒന്നിച്ച്` "together") and are left
+as words. A numeral spoken with its own `‑ു` ending is just the number (`രണ്ടു`→`2`). Words that
+merely contain a number substring are never touched (`ഫ്രണ്ടിൽ` "front", `ആയിരിക്കും`).
+
+`<unk>`/`⁇` is stripped in every mode; inference could instead map it to a marker such as `[?]`
+if model uncertainty should be shown to the reader — an open option, not implemented.
 
 ---
 
@@ -226,7 +253,7 @@ run automatically. C3/C4/C5 remain gaps.
 |---|------|------------------|:--------------:|---------------|
 | C6 | **Visual-lookalike letters/digits** (`ഠ` used as zero in a number) | Homoglyph substitution inside a number. | **★ trivial** | **Implemented — both modes.** `_fix_homoglyphs`: `ഠ`→`0` only when digit-adjacent (`1ഠ0`→`100`); a standalone `ഠ` or one inside a word is untouched. Fires 0× in the current corpus but harmless. Latin `O`/`0` deliberately **not** mapped (too ambiguous). |
 | C2 | **Anusvara vs nasal spelling** (word-final `മ്` vs `ം`) | Per-character substitution surviving current pipeline. | **★★ easy** | **Implemented — both modes.** `_fold_final_nasal`: word-final `മ്`→`ം` (`വരാമ്`→`വരാം`; tolerates trailing punctuation in inference, `വരാമ്.`→`വരാം.`). Only the labial `മ്`; the `ന്` nasal is left alone. Unambiguous. |
-| C1 | **Samvruthokaram / final-vowel drift** (`നാല്`/`നാലു`; final `ു്`/`ു` → `്`) | Hits nearly every word ending → large, broad CER contributor. | **★★ easy** | **Implemented — eval only.** `_fold_samvruthokaram`: word-final consonant+`ു്`/`ു` → consonant+`്` (`നാലു`→`നാല്`). **Symmetric scoring fold, not a spelling corrector** — it can't tell a samvruthokaram `ു` from a real `-u` vowel, so it also folds short words (`ഒരു`→`ഒര്`); fine for symmetric scoring but wrong for a reader, hence eval-only. It is the main CER win (see impact note). |
+| C1 | **Samvruthokaram / final-vowel drift** (`നാല്`/`നാലു`; final `ു്`/`ു` → `്`) | Hits nearly every word ending → large, broad CER contributor. | **★★ easy** | **Implemented — `eval` mode only** (not `train`, not `inference`). `_fold_samvruthokaram`: word-final consonant+`ു്`/`ു` → consonant+`്` (`നാലു`→`നാല്`). **Symmetric scoring fold, not a spelling corrector** — it can't tell a samvruthokaram `ു` from a real `-u` vowel, so it also folds short words (`ഒരു`→`ഒര്`); fine for symmetric scoring but wrong for a reader, hence eval-only. It is the main CER win (see impact note). |
 | C3 | **Conjunct / reph / `്യ`·`്വ` ordering variants** not unified by NFC | Multiple valid encodings of the same conjunct. | **★★★ moderate** | *Gap.* Mostly handled by indic-nlp already; the residual needs targeted per-conjunct rules found by audit — not a single regex. |
 | C5 | **Foreign-word transliteration variants** (`ഫോൺ`/`ഫോണ്`, `ബസ്`/`ബസ്സ്`) | Same borrowed word, different spelling. | **★★★ moderate** | *Gap.* Curated canonical-spelling lexicon for frequent borrowings — inherently a hand-built list, no regex. |
 | C4 | **Long-vowel / gemination spelling drift** (`ാ` vs `ാാ`, `ക്ക` vs `ക`) | Casual-transcription doubling/undoubling. | **★★★★ hard** | *Gap.* Gemination is *contrastive* in Malayalam (`കല` art vs `കല്ല` stone), so no blanket `CC→C` rule is safe — needs a conservative per-word whitelist. |
