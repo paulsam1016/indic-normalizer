@@ -1,0 +1,51 @@
+# Config for `indic-digits check|compare|verbalize` (audio-based choice of number readings).
+# Model / device keys mirror AetherTranscribe's configs/transcription/asr_segments.yaml.
+model_path: /path/to/models/asr/sravaani/v2.nemo   # NeMo hybrid RNN-T(TDT)/CTC checkpoint
+pretrained_name: null             # or a NeMo pretrained name instead of model_path
+cuda: null                        # int = that CUDA device; null = auto-detect; negative = CPU
+allow_mps: true
+compute_dtype: float32            # float32 | bfloat16 | float16 | null (= bf16 if available).
+                                  #   fp32 keeps score margins exact; bf16 is faster / lighter.
+matmul_precision: high            # TF32 matmul: highest | high | medium
+batch_size: 16                    # (clip, candidate text) pairs per decoder/joint/lattice batch
+tdt_loss: torch                   # torch: pure-torch transducer likelihood (no numba / libNVVM)
+                                  # nemo: NeMo's numba RNNT/TDT kernel (needs CUDA toolkit libNVVM)
+joint_chunk_frames: 16            # encoder frames per joint evaluation; lower if OOM
+encoder_batch_s: 30               # encoder batch = as many clips (longest first) as fit
+                                  #   clips x longest-clip-seconds <= this; lower if encoder OOMs
+group_audio_s: 300                # pool this many seconds of recordings per scoring group so GPU
+                                  #   batches fill across files; 0 = one file at a time
+decoding:                         # used only by `compare --transcribe` (model's greedy transcript);
+  strategy: greedy_batch          #   merged over the model's own decoding config
+  greedy:
+    loop_labels: true
+    use_cuda_graph_decoder: false # CUDA-graph decoder crashed (illegal memory access) after scoring
+
+head: tdt                         # verbalize: tdt (RNN-T head) | ctc
+unit: segment                     # verbalize: segment (whole sentence) | word (number's word window,
+                                  #   encoded alone) | window (whole sentence encoded once, candidate
+                                  #   scored on the number's frames + context_words)
+pad_s: 0.25                       # seconds of audio padding around a segment / word window
+context_words: 1                  # word unit: neighbouring words on each side
+max_candidates: 16                # readings scored per number (first = default reading)
+style: contracted                 # default native compound style: contracted | glide
+margin_threshold: 1.5             # nats; best-vs-runner-up below this -> needs_review
+style_margin: 2.0                 # nats; spelling of the chosen reading: the audio's spelling (contracted /
+                                  #   glide / spaced) is kept only if it beats the other spellings of the
+                                  #   same reading by this much (2 ≈ 7x more likely); otherwise `style`.
+                                  #   0 = always the audio's spelling; a large value = always `style`.
+dominant_language_share: 0.8      # one language above this share of a file -> every number in that language;
+                                  #   else per sentence: digits-only follow the last sentence, a switch kept
+                                  #   when a neighbour agrees, an isolated switch goes to review
+hyp_pad_s: 0.5                    # compare only: base-hypothesis text searched within sentence +- this
+                                  #   many seconds. Measurement only, never changes a pick. Larger
+                                  #   finds shifted segments (higher oracle) but more chance matches.
+length_norm: false                # compare NLL per token instead of total NLL
+sample_rate: 16000                # must equal the model's preprocessor sample_rate
+out_dir: data/verbalized          # verbalize writes OUT_DIR/<data dir name>/:
+                                  #   verbalized/<stem>.json  input schema, texts verbalized (all numbers confident)
+                                  #   verify/<stem>.json      confident numbers verbalized, uncertain ones left as digits
+                                  #   failed/<stem>.json      the input file, unchanged: could not be processed
+                                  #   verbalized.tsv / verify.tsv (one row per number) / failed.tsv (one row per file)
+                                  #   summary.json, report.html
+                                  # (--out-dir overrides; must not be the input dir)

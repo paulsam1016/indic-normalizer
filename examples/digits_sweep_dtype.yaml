@@ -1,0 +1,9 @@
+# float32 vs bfloat16 only (all batching settings as in the scoring config).
+grid:
+  compute_dtype: [float32, bfloat16]
+max_changed: 0
+warmup_files: 2
+out_root: outputs/sweep_dtype/eval_frozen
+hyps_dirs:
+  - base_hypotheses-streaming
+  - base_hypotheses-segment

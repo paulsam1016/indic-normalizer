@@ -1,0 +1,21 @@
+# Sweep config for `indic-digits sweep --config my.yaml --sweep-config this.yaml DATA_DIR AUDIO_DIR`.
+# Baseline = the values in the scoring config (my.yaml). Each setting below is changed ONE at a time
+# (smallest first; an out-of-memory value skips the larger ones) and `compare` is run for every value.
+# A setting that is missing, null, [] or none is not swept. Command-line flags override this file.
+
+grid:
+  batch_size: [8, 12, 16, 24]                # pairs per decoder/joint/lattice batch
+  joint_chunk_frames: [8, 16, 32]            # memory ~ batch_size x joint_chunk_frames
+  encoder_batch_s: [20, 30, 60]              # padded seconds per encoder batch
+  group_audio_s: [300, 1800]                 # seconds of recordings pooled per scoring group
+  # compute_dtype: [float32, bfloat16]     # reloads the model; f32 is the default (bf16 picks depend on batching)
+
+greedy: false          # true: carry each setting's best value into the following settings
+max_changed: 0         # a value is "safe" only if at most this many picks differ from the baseline
+min_gain: 0.03         # replace the config value only if >= 3% faster
+warmup_files: 2        # untimed warm-up on N files (also after each model reload)
+limit: null            # only the first N files (null = all)
+out_root: null         # null = outputs/sweep/<data dir name>
+hyps_dirs:             # references for the accuracy columns (as compare --hyps-dir)
+  - base_hypotheses-streaming
+  - base_hypotheses-segment
