@@ -99,6 +99,23 @@ def _fold_final_nasal(text: str) -> str:
     return _C2_FINAL_MA.sub("ം", text)
 
 
+# Train-only C2: never fold a മ് that is itself the second half of a conjunct (ഹ്മ് "hmm" would
+# become the malformed ഹ്ം — virama + anusvara). Eval keeps the unguarded symmetric fold.
+_C2_FINAL_MA_TRAIN = re.compile("(?<!\u0d4d)" + _C2_FINAL_MA.pattern)
+
+
+def _fold_final_nasal_train(text: str) -> str:
+    return _C2_FINAL_MA_TRAIN.sub("ം", text)
+
+
+# Train-only AU fix: indic-nlp rewrites the modern AU length mark ൗ (U+0D57, കൗ) as the
+# two-part sign ൌ (U+0D4C). Same sound, but a different tokenizer piece — and the sravaani
+# tokenizer ranks ൗ as the more frequent one (eval_frozen: 215 ൗ, 0 ൌ). Training targets map
+# back to ൗ so they use the token the model actually knows.
+def _restore_au_length_mark(text: str) -> str:
+    return text.replace("\u0d4c", "\u0d57")
+
+
 # --- C1: samvruthokaram / final-vowel drift -------------------------------------------
 # The "half-u" (samvruthokaram) word ending is written three ways: ...ു് (explicit),
 # ...് (bare virama), ...ു (plain u). They are the same ending; canonicalize to the bare
@@ -248,11 +265,39 @@ def _num_words(n: int) -> str:
     return _THOUS[th - 1] if r == 0 else _join(_THOUS_C[th - 1], _num_words(r))
 
 
+def _thousands_word(x: int) -> str:
+    """x thousand (1-99) as one word: 12 -> പന്ത്രണ്ടായിരം, 20 -> ഇരുപതിനായിരം, 25 ->
+    ഇരുപത്തിയഞ്ചായിരം. 1-9 use the irregular _THOUS table (മൂവായിരം, അയ്യായിരം ...)."""
+    if x < 10:
+        return _THOUS[x - 1]
+    if x == 10:
+        return "പതിനായിരം"
+    w = _num_words(x)
+    if w.endswith("ത" + _VIRAMA):          # ...ത് -> ...തിനായിരം (ഇരുപത് -> ഇരുപതിനായിരം)
+        return w[:-1] + "ിനായിരം"
+    return w[:-1] + "ായിരം"                 # ...് -> ...ായിരം (പന്ത്രണ്ട് -> പന്ത്രണ്ടായിരം)
+
+
+def _big_num_words(n: int) -> str:
+    """0-99,99,999 as spoken Malayalam (Indian grouping). Up to 9999 is _num_words; 10,000-99,999
+    fuse the thousands (പന്ത്രണ്ടായിരത്തിയഞ്ഞൂറ്); lakhs are written as a separate word after
+    a spaced count, matching how ASR output writes them (രണ്ട് ലക്ഷം, ഒരു ലക്ഷത്തി ...)."""
+    if n < 10000:
+        return _num_words(n)
+    if n < 100000:
+        th, r = divmod(n, 1000)
+        w = _thousands_word(th)
+        return w if r == 0 else _join(w[:-1] + "ത്തി", _num_words(r))
+    lk, r = divmod(n, 100000)
+    count = "ഒരു" if lk == 1 else _num_words(lk)
+    return count + (" ലക്ഷം" if r == 0 else " ലക്ഷത്തി " + _big_num_words(r))
+
+
 def _verbalize_digits(m: "re.Match[str]") -> str:
     s = m.group(0)
-    if len(s) > 4 or (len(s) > 1 and s[0] == "0"):
-        return " ".join(_ONES[int(c)] for c in s)   # id-like: digit by digit
-    return _num_words(int(s))
+    if len(s) > 7 or (len(s) > 1 and s[0] == "0"):
+        return " ".join(_ONES[int(c)] for c in s)   # id-like (phone, account, leading 0): digit by digit
+    return _big_num_words(int(s))
 
 
 # --- Inverse text normalization (ITN): native number words -> digits ------------------
@@ -275,6 +320,7 @@ _ONE2DIGIT = {w: str(i) for i, w in enumerate(_ONES)}
 # non-number remainder — which is kept as the suffix. Guarded so a token that does NOT begin
 # with a number unit (ഫ്രണ്ടിൽ "front", ആയിരിക്കും "will be") is never touched.
 _SIGN2VOWEL = {v: k for k, v in _V_SIGN.items() if v}   # vowel-sign -> independent vowel
+_ORDINAL_SUFFIX = re.compile("^ാ(?:ം|മ)")               # ordinal ആം / ആമത്(തെ|ായി...)
 _VSIGNS = set("ാിീുൂൃെേൈൊോൌ")                            # dependent vowel signs
 
 
@@ -295,13 +341,21 @@ _NUM_UNITS = _number_units()
 _NUM_UKEYS = sorted(_NUM_UNITS, key=len, reverse=True)   # longest-first greedy
 
 
-def _match_unit_at(s: str, allow_stem: bool) -> "tuple[int, int] | None":
-    """Longest number unit at the start of ``s`` -> (value, chars_consumed_in_s), or None.
-    Handles the sandhi glide (യ before a vowel-initial unit) and, when ``allow_stem``, a
-    unit whose trailing samvruthokaram ് was replaced by a directly-attached vowel sign."""
+def _match_unit_at(s: str, allow_stem: bool) -> "tuple[int, int, bool] | None":
+    """Longest number unit at the start of ``s`` -> (value, chars_consumed_in_s, is_stem), or
+    None. Handles the sandhi glide (യ before a vowel-initial unit) and, when ``allow_stem``, a
+    unit whose trailing samvruthokaram ് was replaced by a directly-attached vowel sign (a stem
+    match ends the numeral: what follows is a suffix)."""
+    def _stem(t):                                 # unit whose final ് became an attached vowel sign (നാല് -> നാലാം)
+        for k in _NUM_UKEYS:
+            if (k.endswith(_VIRAMA) and len(k) >= 2 and t.startswith(k[:-1])
+                    and len(t) > len(k) - 1 and t[len(k) - 1] in _VSIGNS):
+                return k
+        return None
+
     for k in _NUM_UKEYS:
         if s.startswith(k):
-            return _NUM_UNITS[k], len(k)
+            return _NUM_UNITS[k], len(k), False
     if s.startswith("യ"):                         # glide: യ + (vowel-sign) stood for an അ-/vowel-initial unit
         rest = s[1:]
         if rest and rest[0] in _SIGN2VOWEL:
@@ -310,29 +364,35 @@ def _match_unit_at(s: str, allow_stem: bool) -> "tuple[int, int] | None":
             cand, glide = "അ" + rest, 1
         for k in _NUM_UKEYS:
             if cand.startswith(k):
-                return _NUM_UNITS[k], glide + (len(k) - 1)
-    if allow_stem:                                # unit's final ് replaced by an attached vowel sign (നാല് -> നാലാം)
-        for k in _NUM_UKEYS:
-            if (k.endswith(_VIRAMA) and len(k) >= 2 and s.startswith(k[:-1])
-                    and len(s) > len(k) - 1 and s[len(k) - 1] in _VSIGNS):
-                return _NUM_UNITS[k], len(k) - 1
+                return _NUM_UNITS[k], glide + (len(k) - 1), False
+        if allow_stem:                            # glide + stem (ഇരുപത്തി|യൊന്നാം = 21st)
+            k = _stem(cand)
+            if k:
+                return _NUM_UNITS[k], glide + len(k) - 2, True
+    if allow_stem:
+        k = _stem(s)
+        if k:
+            return _NUM_UNITS[k], len(k) - 1, True
     return None
 
 
 def _parse_leading_number(core: str) -> "tuple[int, int] | None":
     """(total_value, chars_consumed) for the numeral at the start of ``core``, or None.
-    Greedy additive composition mirroring _num_words; stem-match allowed only for the very
-    first unit (so a trailing ordinal/case vowel becomes part of the suffix, not the number)."""
+    Greedy additive composition mirroring _num_words. Full/glide matches are always tried
+    first (so well-formed numbers round-trip exactly); a stem match is the fallback and ends
+    the numeral, leaving the attached vowel (e.g. the ordinal ാം) as the suffix."""
     i = total = 0
     matched = False
     while i < len(core):
-        m = _match_unit_at(core[i:], allow_stem=not matched)
+        m = _match_unit_at(core[i:], allow_stem=True)
         if not m:
             break
-        val, clen = m
+        val, clen, is_stem = m
         total += val
         i += clen
         matched = True
+        if is_stem:
+            break
     return (total, i) if matched else None
 
 
@@ -393,13 +453,16 @@ def _itn_token(tok: str) -> str:
         return tok
     value, consumed = r
     suffix = _unglide(core[consumed:])
-    # A stem-matched numeral strands its own samvruthokaram (ു / ു്) at the head of the
-    # remainder (നാലു -> "4" + "ു"); that vowel belongs to the number, not the suffix, so
-    # drop it. A real vowel-sign suffix like the ordinal ാം is NOT ു, so it is kept.
-    if suffix.startswith("ു" + _VIRAMA):
-        suffix = suffix[2:]
-    elif suffix.startswith("ു"):
-        suffix = suffix[1:]
+    # The numeral spoken with its own -u ending (രണ്ടു, ആറു, പത്തു) is just the number.
+    if suffix in ("ു", "ു" + _VIRAMA):
+        suffix = ""
+    # ORDINALS ONLY: a fused suffix is converted only when it is the ordinal ആം family
+    # (ാം / ാമത് / ാമത്തെ / ാമതായി ...): പത്താം -> 10-ാം, രണ്ടാമത്തെ -> 2-ാമത്തെ.
+    # Any other fusion is a word, not a numeral, and is left untouched — measured on the
+    # corpus, numeral-prefix idioms dominate: ഒന്നും "anything/nothing", രണ്ടും "both",
+    # ഒന്നിച്ച് "together", ഒന്നുകിൽ "either", രണ്ടുമൂന്ന് "two or three".
+    if suffix and not _ORDINAL_SUFFIX.match(suffix):
+        return tok
     body = str(value) + ("-" + suffix if suffix else "")
     return lead + body + trail
 
@@ -418,7 +481,13 @@ def _to_digits(text: str) -> str:
 # --- English-style number words (Malayalam script, as base models write code-mixed
 # numbers) -> value -> the same canonical Malayalam words as digits get. Spelling
 # variants collected from real base-model output. --------------------------------------
-_GROUP_COMMA = re.compile(r"(?<=[0-9]),(?=[0-9]{3})")   # 70,000 -> 70000 (before _PUNCT splits it)
+# Digit-group commas, Western (70,000 / 1,000,000) AND Indian lakh grouping (1,75,000 /
+# 12,50,000) -> one digit run, BEFORE _PUNCT splits it. A list like "1,2,3" is not a grouping.
+_GROUP_COMMA = re.compile(r"(?<![\d,])\d{1,3}(?:(?:,\d{2})*,\d{3}|(?:,\d{3})+)(?!,?\d)")
+
+
+def _drop_group_commas(text: str) -> str:
+    return _GROUP_COMMA.sub(lambda m: m.group(0).replace(",", ""), text)
 _EN_UNIT = {"സീറോ": 0, "വൺ": 1, "ത്രീ": 3, "ഫൈവ്": 5, "സിക്സ്": 6, "സെവൻ": 7,
             "എയ്റ്റ്": 8, "എയിറ്റ്": 8, "നൈൻ": 9}
 _EN_TEEN = {"ടെൻ": 10, "ഇലവൻ": 11, "ഇലെവൻ": 11, "ട്വെൽവ്": 12, "ട്വൽവ്": 12,
@@ -518,9 +587,14 @@ _IND_NORM = IndicNormalizerFactory().get_normalizer("ml")
 INDIC_NLP_AVAILABLE = True
 
 
-# Accepted mode names. Two behaviours: eval (model-facing, verbalize) and inference
-# (reader-facing, ITN). "training"/"fine-tune" are aliases of eval.
-_EVAL_MODES = {"eval", "evaluation", "training", "train", "fine-tune", "finetune"}
+# Accepted mode names. Three behaviours:
+#   eval      — WER/CER scoring: canonicalize, and verbalize digits to native Malayalam words
+#               (24 -> ഇരുപത്തിനാല്) so digit references meet word hypotheses.
+#   train     — training / fine-tune targets: same canonicalization as eval but numbers are
+#               NOT rewritten (digit verbalization is done outside this library).
+#   inference — reader-facing ITN: keep punctuation and case, number words -> digits.
+_EVAL_MODES = {"eval", "evaluation"}
+_TRAIN_MODES = {"train", "training", "fine-tune", "finetune"}
 _INFER_MODES = {"inference", "infer", "itn"}
 
 
@@ -530,20 +604,88 @@ def _resolve_mode(mode) -> str:
         return "inference"
     if m in _EVAL_MODES:
         return "eval"
+    if m in _TRAIN_MODES:
+        return "train"
     raise ValueError(
-        f"unknown mode {mode!r}; use 'eval' (aliases: training, fine-tune) or 'inference'"
+        f"unknown mode {mode!r}; use 'eval', 'train' (aliases: training, fine-tune) or 'inference'"
     )
+
+
+# I1 (inference): a standalone ഒന്ന്/ഒന്നു is far more often the softener "just / once"
+# (ഒന്ന് നോക്ക് "just look", ഒന്ന് ചെക്ക് ചെയ്യ്, ഒന്ന് പറഞ്ഞു) than the number 1. Convert it
+# only in NUMERIC CONTEXT: a neighbouring token is a number (digits, a native or English number
+# word), or the next token is a unit/counter (രൂപ, ദിവസം, വർഷം, ഇയർ, ലക്ഷം ...). Otherwise the
+# word is held in a placeholder across E9/ITN and restored unchanged.
+_ONE_HOLD, _ONEU_HOLD = "\ue010", "\ue011"
+_UNIT_PREFIXES = ("രൂപ", "ദിവസ", "മാസ", "വർഷ", "ആഴ്ച", "മണി", "മിനിറ്റ", "മിനിട്ട", "സെക്കൻ",
+                  "കിലോ", "ഗ്രാം", "ലിറ്റ", "മീറ്റ", "ലക്ഷ", "ആയിര", "കോടി", "ശതമാന", "പേര",
+                  "പേർ", "തവണ", "പ്രാവശ്യ", "എണ്ണ", "ഇയർ", "മന്ത്", "ലാക്", "ലാഖ്", "ഡേയ്",
+                  "വീക്ക്", "അവർ", "പെർസ", "തൗസ", "ഹൺഡ്ര", "ഹണ്ട്ര", "മില്യ", "പോയിന്റ")
+_UNIT_EXACT = {"ഡേ", "ഡേസ്", "ക്ലാസ്"}
+
+
+def _is_numberish(core: str) -> bool:
+    if not core:
+        return False
+    if core[0].isdigit() or core in _ONE2DIGIT or core in _WORD2NUM or core in _EN_ANY:
+        return True
+    return core.endswith("ു") and (core[:-1] + _VIRAMA) in _WORD2NUM   # രണ്ടു, ആറു
+
+
+def _hold_lone_one(text: str) -> str:
+    toks = text.split()
+    cores = [_peel(t)[1] for t in toks]
+    for i, c in enumerate(cores):
+        if c not in ("ഒന്ന്", "ഒന്നു"):
+            continue
+        prev = cores[i - 1] if i > 0 else ""
+        nxt = cores[i + 1] if i + 1 < len(cores) else ""
+        if (_is_numberish(prev) or _is_numberish(nxt) or nxt in _UNIT_EXACT
+                or nxt.startswith(_UNIT_PREFIXES)):
+            continue
+        toks[i] = toks[i].replace(c, _ONE_HOLD if c == "ഒന്ന്" else _ONEU_HOLD, 1)
+    return " ".join(toks)
+
+
+# Colon -> visarga guard. indic-nlp rewrites ANY ':' that follows a Malayalam letter as the
+# visarga ഃ. That is right only INSIDE a word, where ':' is typed for ഃ (ദു:ഖം -> ദുഃഖം). A colon
+# followed by a space / end / non-letter is punctuation (ആണ്: ..., പറ:) and must stay ':' —
+# eval then strips it, inference keeps it. Such colons are swapped for a private-use placeholder
+# around the indic-nlp call so it cannot touch them.
+_COLON_PUNCT = re.compile(r":(?![\u0d00-\u0d7f])")
+
+# E13: bracketed annotation tags in references (<unintelligible>, <noise>, <laugh> ...). E5 would
+# strip the brackets and leave the tag NAME as a spoken word; drop the whole tag instead.
+# (<unk> is E3.) Not applied in train mode, where tags are handled by the data pipeline.
+_TAG = re.compile(r"<[A-Za-z][A-Za-z _-]*>")
+
+# T1 (train only): punctuation INSIDE a number is meaning, not punctuation — an external
+# verbalizer needs 4:00-5:00 (time range), 2.5 (decimal), 70% (percent), 23-ന് (numeral +
+# case suffix), 8-9 (range). Hold those characters in private-use placeholders across E5.
+_NUM_PUNCT = re.compile(r"(?<=\d)[:.\-/+](?=\d)|(?<=\d)%|(?<=\d)-(?=[\u0d00-\u0d7f])")   # 3+2 kept too
+_NUM_PUNCT_HOLD = {":": "\ue001", ".": "\ue002", "-": "\ue003", "/": "\ue004", "%": "\ue005", "+": "\ue006"}
+_NUM_PUNCT_RESTORE = str.maketrans({v: k for k, v in _NUM_PUNCT_HOLD.items()})
+
+
+def _protect_num_punct(text: str) -> str:
+    return _NUM_PUNCT.sub(lambda m: _NUM_PUNCT_HOLD[m.group(0)], text)
+_COLON_HOLD = "\ue000"
 
 
 def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
     """Normalize Malayalam ASR text; see module docstring and NORMALIZATION.md (mode selector).
 
-    mode="eval" (default; aliases "training"/"fine-tune") — model-facing: strip punctuation,
-    lowercase, and verbalize every number to native Malayalam words (24 -> ഇരുപത്തിനാല്).
-    mode="inference" — reader-facing ITN: keep punctuation and case, and render every number
-    as digits (ഇരുപത്തിനാല് -> 24, ട്വൻറ്റി ഫോർ -> 24).
+    mode="eval" (default; alias "evaluation") — WER/CER scoring: strip punctuation, lowercase,
+    and verbalize digits to native Malayalam words (24 -> ഇരുപത്തിനാല്). English-style number
+    words (ട്വൻറ്റി ഫോർ) are left as written.
+    mode="train" (aliases "training", "fine-tune") — training targets: like eval, but numbers
+    are NOT rewritten (digit verbalization is handled outside this library), punctuation inside
+    a number is kept for that verbalizer (4:00-5:00, 2.5, 70%, 23-ന്, 8-9), the C1 fold is off
+    (targets keep their real spelling) and <tags> are left to the data pipeline.
+    mode="inference" — reader-facing ITN: keep punctuation and case; number words -> digits
+    (ഇരുപത്തിനാല് -> 24, ട്വൻറ്റി ഫോർ -> 24, നാലാം -> 4-ാം); existing digits are left untouched.
 
-    segmentation (eval only, default OFF) — apply the boundary rules W4 (intra-word hyphen
+    segmentation (eval/train only, default OFF) — apply the boundary rules W4 (intra-word hyphen
     join), W3 (single-letter acronym-run collapse) and W5 (adjacent-duplicate collapse). They
     are OFF by default because on the measured corpora they are net-neutral-to-slightly-
     negative (the boundary variants they target are rare, and each occasionally introduces a
@@ -558,32 +700,48 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
 
     # --- Shared canonicalization base (identical in both modes) ---
     text = _fix_chillu_conjuncts(text or "")      # E12: ൻ്റ -> ന്റ (mis-encoded conjunct, NFC-invisible)
-    text = _IND_NORM.normalize(text)              # E2:  chillu / ZWJ / two-part vowels / visarga
+    text = _COLON_PUNCT.sub(_COLON_HOLD, text)    #      protect punctuation colons (not ദു:ഖം)
+    text = _IND_NORM.normalize(text)              # E2:  chillu / ZWJ / two-part vowels / mid-word ':' -> ഃ
+    text = text.replace(_COLON_HOLD, ":")
     text = unicodedata.normalize("NFC", text)     # E1
     text = _UNK.sub(" ", text)                    # E3:  <unk>/⁇ removed in BOTH modes
     text = _ZW.sub("", text)                      # E4
     text = "".join(_DIGITS.get(c, c) for c in text)  # E6:  Indic digit -> ASCII (both modes)
     text = _fix_homoglyphs(text)                  # C6:  ഠ used as zero in a number -> 0 (both modes)
-    text = _fold_final_nasal(text)                # C2:  word-final മ് -> ം (both modes)
-    text = _GROUP_COMMA.sub("", text)             # 70,000 -> 70000 (both: keeps a number one token)
+    if mode == "train":
+        text = _restore_au_length_mark(text)      # T2:  ൌ -> ൗ (undo indic-nlp; train only)
+        text = _fold_final_nasal_train(text)      # C2:  word-final മ് -> ം, not after a virama
+    else:
+        text = _fold_final_nasal(text)            # C2:  word-final മ് -> ം
+    text = _drop_group_commas(text)               # E7:  70,000 / 1,75,000 -> one digit run (all modes)
+    if mode != "train":
+        text = _TAG.sub(" ", text)                # E13: <unintelligible>-style tags (eval + inference)
 
-    if mode == "eval":
+    if mode in ("eval", "train"):
+        if mode == "train":
+            text = _protect_num_punct(text)            # T1:  4:00-5:00, 2.5, 70%, 23-ന്, 8-9 survive E5
         if segmentation:
             text = _join_intra_word_hyphen(text)       # W4:  e-mail -> email (BEFORE E5 eats the hyphen)
         text = _PUNCT.sub(" ", text)                   # E5:  strip punctuation
-        text = _canonicalize_en_numbers(text)          # E9:  "ട്വൻറ്റി ഫോർ" -> native words
-        text = _NUM_RE.sub(_verbalize_digits, text)    # E8:  digits -> native words (OOV-safe targets)
+        if mode == "train":
+            text = text.translate(_NUM_PUNCT_RESTORE)
+        if mode == "eval":                             # E8 (eval only; train leaves digits)
+            text = _NUM_RE.sub(_verbalize_digits, text)  #      digits -> native words (24 -> ഇരുപത്തിനാല്)
         text = text.lower()                            # E10: lowercase
-        text = _fold_samvruthokaram(text)              # C1:  word-final ...ു്/...ു -> ...് (eval only)
+        if mode == "eval":
+            text = _fold_samvruthokaram(text)          # C1:  word-final ...ു്/...ു -> ...് (eval only: a
+                                                       #      training target must keep the real spelling)
         if segmentation:
             text = _collapse_letter_runs(text)         # W3:  "എ ടി എം" -> "എടിഎം" (single-letter runs)
             text = _collapse_reduplication(text)       # W5:  "വേഗം വേഗം" -> "വേഗം" (adjacent identical)
         return _SPACE.sub(" ", text).strip()           # E11
 
-    # --- inference: reader-facing ITN (keep E5 punctuation + E10 case; numbers -> digits) ---
-    # E9 still resolves English-style number words to native words, so the single ITN pass
-    # below turns EVERY number (native or English-derived) into digits.
+    # --- inference: reader-facing ITN (keep E5 punctuation + E10 case; number words -> digits) ---
+    # Existing digits are left exactly as written (4:00-5:00 stays 4:00-5:00). E9 resolves
+    # English-style number words to native words, then one ITN pass turns every number WORD
+    # (native or English-derived) into digits.
+    text = _hold_lone_one(text)                    # I1:  standalone ഒന്ന് = "just/once", not 1
     text = _canonicalize_en_numbers(text)          # E9:  "ട്വൻറ്റി ഫോർ" -> "ഇരുപത്തിനാല്"
-    text = _NUM_RE.sub(_verbalize_digits, text)    # normalize any stray ASCII digits to canonical words...
-    text = _to_digits(text)                        # E8⁻¹: ...then ITN everything back to digits
+    text = _to_digits(text)                        # ITN: number words -> digits
+    text = text.replace(_ONE_HOLD, "ഒന്ന്").replace(_ONEU_HOLD, "ഒന്നു")
     return _SPACE.sub(" ", text).strip()           # E11 (punctuation + case preserved)
