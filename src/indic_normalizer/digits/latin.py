@@ -238,8 +238,10 @@ def candidates(core: str, cls: str) -> List[Candidate]:
                                            "latin_k", "latin_ordinal"))]
             return [Candidate(f"{c.text} {w}", "en", f"{c.form}+{w}") for c in n for w in ("percent", "percentage")]
         if cls == "currency":
-            n = _number_any(re.sub(r"(?i)^(₹|rs\.?)\s*|\s*₹$", "", s))
-            return [Candidate(f"{c.text} rupees", "en", c.form + "+rupees") for c in n]
+            n = [c for c in _number_any(re.sub(r"(?i)^(₹|rs\.?|inr)\s*|\s*₹$", "", s))
+                 if not c.form.startswith(("latin_digit_by_digit", "latin_doubled"))]
+            return [Candidate(f"{c.text} rupees", "en", c.form + "+rupees") for c in n] + \
+                [Candidate(c.text, "en", c.form + "+nocurrency") for c in n]
         if cls == "time":
             return _time(s)
         if cls in ("time_range", "range"):

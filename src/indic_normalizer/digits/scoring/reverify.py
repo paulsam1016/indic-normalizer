@@ -28,6 +28,7 @@ import time
 from typing import List, Optional
 
 from .details import NUMBER_COLS, SEP, append_typed, number_rows, read_tsv, tsv_path, write_tsv
+from .pipeline import bare_core as _bc  # old rows: 500, new cores: ₹500
 from .pipeline import (_number_details, _round, _run, decide, iter_groups, same_document)
 
 NUMBER_REPORT_COLS = ["file", "sentence", "number_index", "number", "class", "status", "final_pick", "model_pick",
@@ -127,7 +128,7 @@ def reverify(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[str] = No
             rows = {(int(r["sentence"]), int(r["number_index"])): r for r in by_file[stem]}
             plans = it["plans"]
             nums = [(p, k, n) for p in plans for k, n in enumerate(p["numbers"])]
-            if len(nums) != len(rows) or any((p["idx"], k) not in rows or rows[(p["idx"], k)].get("number") != n.span.core
+            if len(nums) != len(rows) or any((p["idx"], k) not in rows or _bc(rows[(p["idx"], k)].get("number")) != _bc(n.span.core)
                                              for p, k, n in nums):
                 tot["skipped_misaligned"] += 1
                 log(f"{pre} skipped (numbers in the input no longer match verbalized.tsv)")
@@ -399,7 +400,7 @@ def refresh_waiting(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[st
             rows = {(int(r["sentence"]), int(r["number_index"])): r for r in rows_of[stem]}
             plans = it["plans"]
             nums = [(p, k, n) for p in plans for k, n in enumerate(p["numbers"])]
-            if len(nums) != len(rows) or any((p["idx"], k) not in rows or rows[(p["idx"], k)].get("number") != n.span.core
+            if len(nums) != len(rows) or any((p["idx"], k) not in rows or _bc(rows[(p["idx"], k)].get("number")) != _bc(n.span.core)
                                              for p, k, n in nums):
                 tot["skipped_misaligned"] += 1
                 log(f"{pre} skipped (numbers in the input no longer match the TSV)")

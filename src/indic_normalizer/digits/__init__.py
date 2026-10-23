@@ -84,6 +84,8 @@ def verbalize(text: str, lang: str = "ml", style: str = "contracted",
     English sentence: at least half of its letters Latin)."""
     if not text:
         return text or ""
+    from .detect import join_currency
+    text = join_currency(text)                       # ₹ 500 / Rs. 500 -> read as one amount
     if latin is None:
         from .latin import is_english
         latin = is_english(text)

@@ -866,3 +866,47 @@ def test_verbalize_resume(tmp_path):
     tot = verbalize_dir(str(data), str(audio), FakeScorer(), cfg, resume=True, log=lambda *_: None)
     assert tot["this_run"]["files"] == 0 and tot["resumed_skipped"] == 3
     assert (tmp_path / "o" / "data" / "report.html").exists()
+
+
+def test_verbalize_retry_failed(tmp_path):
+    from indic_normalizer.digits.scoring.details import read_tsv
+    data, audio = tmp_path / "data", tmp_path / "audio"
+    data.mkdir()
+    audio.mkdir()
+    for k in range(2):
+        (data / f"r{k}.json").write_text(json.dumps(DOC, ensure_ascii=False), encoding="utf-8")
+    _wav(audio / "r0.wav", 4.0)                                  # r1: no audio yet -> failed
+    cfg = load_config(None, out_dir=str(tmp_path / "o"))
+    rd = tmp_path / "o" / "data"
+    verbalize_dir(str(data), str(audio), FakeScorer(), cfg, log=lambda *_: None)
+    assert (rd / "failed" / "r1.json").exists()
+    tot = verbalize_dir(str(data), str(audio), FakeScorer(), cfg, resume=True, log=lambda *_: None)
+    assert tot["this_run"]["files"] == 0                         # --resume: failed counts as done
+    _wav(audio / "r1.wav", 4.0)
+    tot = verbalize_dir(str(data), str(audio), FakeScorer(), cfg, retry_failed=True, log=lambda *_: None)
+    assert tot["this_run"]["files"] == 1 and tot["resumed_skipped"] == 1
+    assert not (rd / "failed" / "r1.json").exists() and not read_tsv(str(rd / "failed.tsv"))
+    assert (rd / "verbalized" / "r1.json").exists() or (rd / "verify" / "r1.json").exists()
+    s = json.load(open(rd / "summary.json", encoding="utf-8"))
+    assert s["failed"] == 0 and s["files"] == 2
+
+
+def test_old_rows_without_currency_sign_still_align(tmp_path):
+    from indic_normalizer.digits.scoring.details import NUMBER_COLS, read_tsv, write_tsv
+    from indic_normalizer.digits.scoring.reverify import reverify
+    data, audio = tmp_path / "data", tmp_path / "audio"
+    data.mkdir()
+    audio.mkdir()
+    (data / "a.json").write_text(json.dumps({"sentences": [{"text": "ഫീസ് ₹ 500 ആണ്", "start_time": 0, "end_time": 2}],
+                                             "words": []}, ensure_ascii=False), encoding="utf-8")
+    _wav(audio / "a.wav", 3.0)
+    cfg = load_config(None, out_dir=str(tmp_path / "o"))
+    sc = Prefers("അഞ്ഞൂറ്")
+    verbalize_dir(str(data), str(audio), sc, cfg, log=lambda *_: None)
+    rd = tmp_path / "o" / "data"
+    rows = read_tsv(str(rd / "verify.tsv"))
+    assert rows[0]["number"] == "₹500"
+    rows[0]["number"] = "500"                                  # as an older run wrote it
+    write_tsv(str(rd / "verify.tsv"), NUMBER_COLS, rows)
+    tot = reverify(str(rd), str(audio), sc, cfg, log=lambda *_: None)
+    assert tot["waiting"]["files"] == 1 and tot["waiting"]["skipped_misaligned"] == 0

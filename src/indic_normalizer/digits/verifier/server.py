@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ..scoring.config import ScoringConfig
 from ..scoring.details import COLS, NUMBER_COLS, SEP, read_tsv, tsv_path, write_tsv
-from ..scoring.pipeline import plan_text, same_document
+from ..scoring.pipeline import bare_core as _bc, plan_text, same_document
 from .. import ml
 from .ui import PAGE
 
@@ -270,7 +270,7 @@ def _open_numbers(plans, rows, kind):
                              f"{len(lst)} pending row(s) in verify.tsv")
         for k, n in enumerate(p["numbers"]):
             r = lst[k] if has_rows else None
-            if r is not None and r.get("number") != n.span.core:
+            if r is not None and _bc(r.get("number")) != _bc(n.span.core):
                 raise Misaligned(f"sentence {p['idx']}: copy has {n.span.core}, verify.tsv has {r.get('number')}")
             nid = f"{p['idx']}:{r.get('number_index')}" if r is not None else f"{p['idx']}:f{k}"
             out.append((nid, p["idx"], k, n, r))
@@ -337,7 +337,7 @@ def _rebuild(run, stem, cfg, mine, picks, edits, st=None):
         for k, n in enumerate(p["numbers"]):
             n_total += 1
             rid, r = f"{p['idx']}:{k}", rows.get((p["idx"], k))
-            if r is None or r.get("number") != n.span.core:
+            if r is None or _bc(r.get("number")) != _bc(n.span.core):
                 raise Misaligned(f"sentence {p['idx']} number {k}: input has {n.span.core}, "
                                  f"verify.tsv has {(r or {}).get('number')}")
             pending = r.get("status") == "pending"
@@ -454,7 +454,8 @@ def api_candidates(st, text, style=None):
     input with that reading in place (other numbers default), so '55000 രൂപയുടെ' gives
     'അമ്പത്തയ്യായിരം രൂപയുടെ' ready to use as a custom reading."""
     from .. import candidates as _cands, find as _find, verbalize as _verb
-    text = " ".join(str(text or "").split())
+    from ..detect import join_currency
+    text = join_currency(" ".join(str(text or "").split()))
     if not text:
         raise ValueError("type a number, e.g. 55000, 250യിൽ, 4:30-ന്, 12.5%")
     cfg = run_config(st["run_dir"]) if is_run_dir(st.get("run_dir")) else ScoringConfig()

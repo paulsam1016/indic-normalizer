@@ -2,7 +2,7 @@
 
     indic-digits stats DATA_DIR [--out-root outputs] [--tokenizer tokenizer.model]
     indic-digits latin DATA_DIR [--out-root outputs] [--normalize none|train|eval]
-    indic-digits verbalize --config cfg.yaml DATA_DIR AUDIO_DIR [--out-dir OUT_DIR] [--limit N] [--resume]
+    indic-digits verbalize --config cfg.yaml DATA_DIR AUDIO_DIR [--out-dir OUT_DIR] [--limit N] [--resume | --retry-failed]
     indic-digits compare   --config cfg.yaml DATA_DIR AUDIO_DIR [--hyps-dir base_hypotheses]
                            [--out-root outputs] [--limit N]
     indic-digits sweep     --config cfg.yaml [--sweep-config sweep.yaml] DATA_DIR AUDIO_DIR [--limit N]
@@ -64,6 +64,8 @@ def main(argv=None):
     v.add_argument("--unit", choices=["segment", "word"])
     v.add_argument("--resume", action="store_true",
                    help="skip input files that already have a result in OUT_DIR/<data dir> (interrupted run / new files)")
+    v.add_argument("--retry-failed", action="store_true",
+                   help="like --resume, but files in failed/ (errors) are run again")
     v.add_argument("--out-dir", "--output-dir", dest="out_dir",
                    help="root output dir (config out_dir): writes OUT_DIR/<data dir>/{verbalized,verify,failed}/"
                         "<stem>.json, verbalized.tsv, verify.tsv, failed.tsv, summary.json, report.html")
@@ -180,11 +182,12 @@ def main(argv=None):
         from .scoring.pipeline import run_dir, verbalize_dir
         cfg = _cfg(a, head=a.head, unit=a.unit, out_dir=a.out_dir)
         run_dir(a.data_dir, cfg)                 # fail before loading the model if out_dir is missing
-        tot = verbalize_dir(a.data_dir, a.audio_dir, _scorer(cfg), cfg, limit=a.limit, resume=a.resume)
+        tot = verbalize_dir(a.data_dir, a.audio_dir, _scorer(cfg), cfg, limit=a.limit, resume=a.resume,
+                            retry_failed=a.retry_failed)
         print(json.dumps(tot, ensure_ascii=False, indent=2))
         r, t = tot["this_run"], tot["totals"]
         print(f"this run: {r['files']} files -> verbalized {r['verbalized']} · verify {r['verify']} · failed "
-              f"{r['failed']}" + (f" ({tot['resumed_skipped']} already done, skipped)" if a.resume else ""))
+              f"{r['failed']}" + (f" ({tot['resumed_skipped']} already done, skipped)" if (a.resume or a.retry_failed) else ""))
         print(f"run dir now: verbalized {t['verbalized']} · verify {t['verify']} · reverify {t['reverify']} · "
               f"failed {t['failed']} -> {tot['out_dir']}")
     elif a.cmd == "compare":
