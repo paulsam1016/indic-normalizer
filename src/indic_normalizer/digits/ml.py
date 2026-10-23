@@ -834,9 +834,14 @@ def _candidates(s: str, cls: str, style: str) -> List[Candidate]:
             out += [Candidate(f"{c.text} {w}", c.lang, c.form + "+" + tag) for w, tag in tags]
         return out
     if cls == "currency":
-        n = _number_any(re.sub(r"(?i)^(₹|rs\.?)\s*|\s*₹$", "", s), style)
-        return [Candidate(f"{c.text} രൂപ", c.lang, c.form + "+rupa") if c.lang == "ml"
-                else Candidate(f"{c.text} റുപ്പീസ്", "en", c.form + "+rupees") for c in n]
+        # ₹ / Rs / INR: the amount with രൂപ / റുപ്പീസ്, then the bare amount (the sign is often not
+        # said); never digit by digit
+        n = [c for c in _number_any(re.sub(r"(?i)^(₹|rs\.?|inr)\s*|\s*₹$", "", s), style)
+             if not c.form.startswith(("digit_by_digit", "doubled"))]
+        money = [Candidate(f"{c.text} രൂപ", c.lang, c.form + "+rupa") if c.lang == "ml"
+                 else Candidate(f"{c.text} റുപ്പീസ്", "en", c.form + "+rupees") for c in n]
+        bare = [Candidate(c.text, c.lang, c.form + "+nocurrency") for c in n if not c.form.endswith("_alt")]
+        return money[:4] + bare[:3] + money[4:] + bare[3:]
     if cls == "time":
         return _time(s, style)
     if cls == "time_range":

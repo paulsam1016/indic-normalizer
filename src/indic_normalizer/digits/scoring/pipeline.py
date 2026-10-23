@@ -33,6 +33,7 @@ import datetime as _dt
 import glob
 import json
 import os
+import re
 from typing import Dict, List, Optional
 
 from ...languages import malayalam as _ml
@@ -127,6 +128,14 @@ def _sub(text_train: str, spans, j: int, cand_text: str, style: str, latin: bool
 CURRENCY_WORDS = ("₹", "rs", "inr")
 
 
+def currency_issue(span) -> Optional[str]:
+    """Every amount with a currency sign (₹ / Rs / INR, joined or written apart) is reviewed:
+    whether രൂപ / റുപ്പീസ് was said is not certain."""
+    if span.cls == "currency" or re.match(rf"(?i)^{_SIGN}\d|^\d.*₹$", span.core):
+        return f"currency sign ({span.core})"
+    return None
+
+
 def context_issue(text: str, span) -> Optional[str]:
     """A problem in the text AROUND a number that its reading can't fix, so a person should
     look: a currency sign written as a separate word (₹ 500, Rs. 500, INR 500, 500 ₹) — the
@@ -142,6 +151,15 @@ def context_issue(text: str, span) -> Optional[str]:
     return None
 
 
+from ..detect import SIGN as _SIGN, join_currency  # noqa: E402
+_SIGN_WORD = re.compile(rf"(?i){_SIGN}")
+
+
+def bare_core(core: str) -> str:
+    """A number core without its currency sign (₹70000 / rs500 / 500₹ -> 70000 / 500)."""
+    return re.sub(rf"(?i)^{_SIGN}|₹$", "", core or "")
+
+
 def _word_map(words, spans):
     """Position in ``words`` (the sentence's timed words) of each span, or None if they don't
     line up with the sentence's numbers."""
@@ -149,7 +167,7 @@ def _word_map(words, spans):
         return None
     flat = [(i, sp.core) for i, w in enumerate(words)
             for sp in _find(_ml.normalize(str(w.get("word", "")), mode="train"))]
-    if [c for _, c in flat] != [sp.core for sp in spans]:
+    if [bare_core(c) for _, c in flat] != [bare_core(sp.core) for sp in spans]:
         return None
     return [i for i, _ in flat]
 
@@ -172,7 +190,7 @@ def plan_document(doc: dict, audio, cfg: ScoringConfig, units=("segment",)) -> L
     plans, sr = [], cfg.sample_rate
     langs = doc_languages(doc, cfg)
     for k, s in enumerate(_sentences(doc)):
-        text_train = _ml.normalize(s.get("text") or "", mode="train")
+        text_train = join_currency(_ml.normalize(s.get("text") or "", mode="train"))
         spans = _find(text_train)
         plan = {"idx": k, "sentence": s, "text_train": text_train, "numbers": [], "clip": None}
         plans.append(plan)
@@ -195,7 +213,7 @@ def plan_document(doc: dict, audio, cfg: ScoringConfig, units=("segment",)) -> L
         for j, sp in enumerate(spans):
             cands = _candidates(sp, style=cfg.style, latin=eng, next_word=_next_word(text_train, sp))[:cfg.max_candidates]
             n = Number(k, sp, cands, default_text)
-            n.text_issue = context_issue(text_train, sp) or lang_issue
+            n.text_issue = currency_issue(sp) or context_issue(text_train, sp) or lang_issue
             if "segment" in units:
                 n.jobs["segment"] = [(seg_audio, _sub(text_train, spans, j, c.text, cfg.style, eng)) for c in cands]
                 n.unit_used["segment"] = "segment"
@@ -555,7 +573,7 @@ def plan_text(doc: dict, cfg: ScoringConfig) -> List[dict]:
     plans = []
     langs = doc_languages(doc, cfg)
     for k, s in enumerate(_sentences(doc)):
-        text_train = _ml.normalize(s.get("text") or "", mode="train")
+        text_train = join_currency(_ml.normalize(s.get("text") or "", mode="train"))
         spans = _find(text_train)
         eng, lang_issue = langs[k]
         plan = {"idx": k, "sentence": s, "text_train": text_train, "numbers": [], "clip": None, "latin": eng}
@@ -563,7 +581,7 @@ def plan_text(doc: dict, cfg: ScoringConfig) -> List[dict]:
         for sp in spans:
             n = Number(k, sp, _candidates(sp, style=cfg.style, latin=eng,
                                           next_word=_next_word(text_train, sp))[:cfg.max_candidates], default_text)
-            n.text_issue = context_issue(text_train, sp) or lang_issue
+            n.text_issue = currency_issue(sp) or context_issue(text_train, sp) or lang_issue
             plan["numbers"].append(n)
         plans.append(plan)
     return plans
@@ -619,16 +637,20 @@ def same_document(doc: dict, plans, cfg: ScoringConfig, scorer=None, choices=Non
         owner.update(_word_owners_by_text(words, sents, {p["idx"]: p["text_train"] for p in plans}))  # ... text wins
         new_words, queues = [], {k: list(v) for k, v in picks_by_sent.items()}
         latin_of = {p["idx"]: bool(p.get("latin")) for p in plans}
+        sent_text = {p["idx"]: p["text_train"] for p in plans}
         sent_words = {}
         for w in words:
             k = owner.get(id(w))
             t = _ml.normalize(str(w.get("word", "")), mode="train")
             if not t:
                 continue
+            if _SIGN_WORD.fullmatch(t) and k in sent_text and \
+                    not re.search(rf"(?i)(?<!\S){re.escape(t)}(?!\S)", sent_text[k]):
+                continue                              # a sign glued to its amount (₹ 500): read with it
             q = queues.get(k, [])
 
             def choose(span, cands, q=q):
-                if q and q[0][0] == span.core:
+                if q and bare_core(q[0][0]) == bare_core(span.core):
                     return q.pop(0)[1]
                 stats["word_fallbacks"] += 1          # word's number doesn't line up: default reading
                 return None
@@ -672,11 +694,14 @@ def folder_counts(rd: str) -> dict:
     return out
 
 
-def done_stems(rd: str) -> set:
-    """Stems that already have a result in a run dir (any output folder or TSV)."""
+def done_stems(rd: str, include_failed: bool = True) -> set:
+    """Stems that already have a result in a run dir (any output folder or TSV); with
+    ``include_failed=False`` a file whose only result is failed/ does not count as done."""
     from .details import read_tsv, tsv_path
     out = set()
     for st in STATUSES + ("reverify",):
+        if st == "failed" and not include_failed:
+            continue
         d = os.path.join(rd, st)
         if os.path.isdir(d):
             out |= {f[:-5] for f in os.listdir(d) if f.endswith(".json")}
@@ -685,7 +710,7 @@ def done_stems(rd: str) -> set:
 
 
 def verbalize_dir(data_dir: str, audio_dir: str, scorer, cfg: ScoringConfig, limit: Optional[int] = None,
-                  log=print, resume: bool = False) -> dict:
+                  log=print, resume: bool = False, retry_failed: bool = False) -> dict:
     """Write, under OUT_DIR/<data dir name>/:
         verbalized/<stem>.json  files whose numbers were all decided confidently: the input's own
                                 schema with sentence / word / transcription texts verbalized
@@ -699,6 +724,7 @@ def verbalize_dir(data_dir: str, audio_dir: str, scorer, cfg: ScoringConfig, lim
         failed.tsv              one row per failed file: stage, error, status
         summary.json            totals, timing, config;   report.html  interactive report
 
+    ``retry_failed``: like ``resume``, but files in failed/ are processed again.
     ``resume``: skip input files that already have a result in the run dir (an interrupted run, or
     new files added to the data dir); ``limit`` then counts the remaining ones. summary.json always
     counts what is in the folders; the report of a resumed run covers the files it processed
@@ -706,12 +732,14 @@ def verbalize_dir(data_dir: str, audio_dir: str, scorer, cfg: ScoringConfig, lim
     rd = run_dir(data_dir, cfg)
     srcs = list_sources(data_dir)
     skipped = 0
+    resume = resume or retry_failed
     if resume:
-        have = done_stems(rd)
+        have = done_stems(rd, include_failed=not retry_failed)
         keep = [s for s in srcs if os.path.splitext(os.path.basename(s))[0] not in have]
         skipped = len(srcs) - len(keep)
         srcs = keep
-        log(f"resume: {skipped} file(s) already done, {len(srcs)} to go")
+        log(f"resume: {skipped} file(s) already done, {len(srcs)} to go"
+            + (" (failed files are retried)" if retry_failed else ""))
     srcs = srcs[:limit]
     for st in STATUSES:
         os.makedirs(os.path.join(rd, st), exist_ok=True)

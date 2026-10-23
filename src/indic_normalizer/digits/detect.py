@@ -40,7 +40,7 @@ _PATTERNS = [
     ("time_range", re.compile(rf"^{_D}{{1,2}}[:.]{_D}{{2}}\s*[-–—]\s*{_D}{{1,2}}[:.]{_D}{{2}}$")),
     ("time",       re.compile(rf"^{_D}{{1,2}}:{_D}{{2}}$")),
     ("percent",    re.compile(rf"^{_D}+(?:[.,]{_D}+)?\s*%$")),
-    ("currency",   re.compile(rf"^(?:₹|rs\.?)\s*{_D}[\d,]*(?:\.{_D}+)?$|^{_D}[\d,]*(?:\.{_D}+)?\s*₹$", re.I)),
+    ("currency",   re.compile(rf"^(?:₹|rs\.?|inr)\s*{_D}[\d,]*(?:\.{_D}+)?$|^{_D}[\d,]*(?:\.{_D}+)?\s*₹$", re.I)),
     ("phone",      re.compile(rf"^\+?{_D}{{10,13}}$|^\+{_D}{{1,3}}[\s-]?{_D}{{6,12}}$")),
     ("range",      re.compile(rf"^{_D}+(?:\.{_D}+)?\s*[-–—~]\s*{_D}+(?:\.{_D}+)?$")),
     ("grouped",    re.compile(rf"^{_D}{{1,3}}(?:(?:,{_D}{{2}})*,{_D}{{3}}|(?:,{_D}{{3}})+)$")),
@@ -57,6 +57,16 @@ _PATTERNS = [
 _LEAD = "\"'“‘(«[{"
 _TRAIL = "\"'”’)»]}.,?!;:…—–-"
 _TOKEN = re.compile(r"\S+")
+
+
+SIGN = r"(?:₹|rs\.?|inr)"                 # currency signs written before / after an amount
+
+
+def join_currency(text: str) -> str:
+    """Glue a currency sign written apart to its amount, so the number is read as money and the
+    sign is replaced by the reading: ₹ 70000 -> ₹70000, rs 500 -> rs500, inr 500, 500 ₹ -> 500₹."""
+    text = re.sub(rf"(?i)(?<!\S)({SIGN})\s+(?=\d)", r"\1", text or "")
+    return re.sub(r"(\d)\s+₹(?!\S)", r"\1₹", text)
 
 
 def to_ascii_digits(s: str) -> str:

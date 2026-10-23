@@ -146,3 +146,32 @@ def test_thousand_without_one():
     assert c["english_no_one"] == "തൗസന്റ് സിക്സ് ഹൺഡ്രഡ്"
     assert "thousand six hundred" in {x.text for x in ml.candidates("1600", latin=True)}
     assert "english_no_one" not in {x.form for x in ml.candidates("2600")}
+
+
+def test_currency_sign_apart_or_joined():
+    from indic_normalizer.digits.detect import join_currency
+    assert join_currency("ഫീസ് ₹ 70000 ആണ്") == "ഫീസ് ₹70000 ആണ്" and join_currency("rs 500") == "rs500"
+    assert join_currency("500 ₹ ആണ്") == "500₹ ആണ്" and join_currency("ആ rs ഇല്ല") == "ആ rs ഇല്ല"
+    assert V("ഫീസ് ₹ 70,000 ആണ്") == "ഫീസ് എഴുപതിനായിരം രൂപ ആണ്"
+    assert V("ഫീസ് Rs. 500 ആണ്") == "ഫീസ് അഞ്ഞൂറ് രൂപ ആണ്" and V("INR 500 only") == "five hundred rupees only"
+    c = [x.text for x in ml.candidates("₹70000")]
+    assert c[:4] == ["എഴുപതിനായിരം രൂപ", "സെവന്റി തൗസന്റ് റുപ്പീസ്", "എഴുപതിനായിരം", "സെവന്റി തൗസന്റ്"]
+    assert not any("പൂജ്യം" in t or "ഡബിൾ" in t for t in c)
+
+
+def test_currency_numbers_reviewed_and_sign_dropped_from_words():
+    from indic_normalizer.digits.scoring import load_config
+    from indic_normalizer.digits.scoring.pipeline import plan_text, same_document
+    doc = {"sentences": [{"text": "ഫീസ് ₹ 70,000 ആണ്", "start_time": 0, "end_time": 3},
+                         {"text": "ഫീസ് Rs.500 ആണ്", "start_time": 3, "end_time": 5}],
+           "words": [{"word": "ഫീസ്", "start_time": 0, "end_time": .5}, {"word": "₹", "start_time": .5, "end_time": .7},
+                     {"word": "70,000", "start_time": .7, "end_time": 2}, {"word": "ആണ്", "start_time": 2, "end_time": 3},
+                     {"word": "ഫീസ്", "start_time": 3, "end_time": 3.5}, {"word": "Rs.500", "start_time": 3.5, "end_time": 4.5},
+                     {"word": "ആണ്", "start_time": 4.5, "end_time": 5}]}
+    cfg = load_config(None)
+    plans = plan_text(doc, cfg)
+    assert all("currency sign" in p["numbers"][0].text_issue for p in plans)
+    out, stt, _ = same_document(doc, plans, cfg, choices={0: ["എഴുപതിനായിരം രൂപ"], 1: ["അഞ്ഞൂറ്"]})
+    assert [s["text"] for s in out["sentences"]] == ["ഫീസ് എഴുപതിനായിരം രൂപ ആണ്", "ഫീസ് അഞ്ഞൂറ് ആണ്"]
+    assert [w["word"] for w in out["words"]] == ["ഫീസ്", "എഴുപതിനായിരം", "രൂപ", "ആണ്", "ഫീസ്", "അഞ്ഞൂറ്", "ആണ്"]
+    assert stt["word_fallbacks"] == 0 and stt["word_text_mismatch"] == 0
