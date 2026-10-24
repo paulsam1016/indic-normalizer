@@ -24,7 +24,9 @@ dependencies = ["indic-nlp-library>=0.92"]
 dev = ["pytest>=7"]
 # indic_normalizer.digits audio scoring (RNN-T/CTC choice of number readings). The text-only
 # parts of the digits module (find / candidates / verbalize / stats) need nothing extra.
-# torch + NeMo: install the builds matching your CUDA if pip's defaults don't fit.
+# torch + NeMo: the CUDA build of torch is the APPLICATION's choice (its index, its CUDA version) —
+# this library deliberately declares no torch index, so it never overrides the app's (a uv project
+# depending on this package would otherwise be pulled to whatever CUDA this file named).
 digits = [
     "numpy>=1.22",
     "PyYAML>=6",
@@ -32,14 +34,6 @@ digits = [
     "torch==2.12.1",
     "nemo_toolkit[asr]==3.0.0",
     ]
-
-[tool.uv.sources]
-torch = { index = "pytorch-cu132" }
-
-[[tool.uv.index]]
-name = "pytorch-cu132"
-url = "https://download.pytorch.org/whl/cu132"
-explicit = true
 
 [project.scripts]
 indic-digits = "indic_normalizer.digits.cli:main"
