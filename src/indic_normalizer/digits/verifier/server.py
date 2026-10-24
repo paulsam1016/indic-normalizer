@@ -66,18 +66,20 @@ def _save_settings(d):
 
 def is_run_dir(p: str) -> bool:
     return bool(p) and os.path.isdir(p) and any(
-        os.path.exists(os.path.join(p, x)) for x in ("verify.tsv", "failed.tsv", "verify", "failed",
+        os.path.exists(os.path.join(p, x)) for x in ("verify.tsv", "failed.tsv", "verify", "failed", "verbalized.tsv",
                                                      "reverify.tsv", "reverify"))
 
 
 KINDS = ("verify", "reverify", "failed")      # folders the verifier works on
+OPEN_KINDS = KINDS + ("verbalized",)           # + finished files, opened to change decided numbers
 from ..scoring.details import TYPED_COLS  # noqa: E402,F401  (columns of typed_readings.tsv)
 from ..scoring.details import append_decisions, decision_record  # noqa: E402
 
 
 def _rows_kind(kind):
-    """TSV holding a kind's number rows: reverify files -> reverify.tsv, the rest -> verify.tsv."""
-    return "reverify" if kind == "reverify" else "verify"
+    """TSV holding a kind's number rows: reverify files -> reverify.tsv, finished files ->
+    verbalized.tsv, the rest -> verify.tsv."""
+    return kind if kind in ("reverify", "verbalized") else "verify"
 
 
 def _log_typed(run, recs):
@@ -210,13 +212,23 @@ def api_files(st):
                     _remove(os.path.join(d, fn))
                     continue
                 files[(kind, stem)] = {"file": stem, "kind": kind}
+    fin = {}                                          # finished files (with numbers): open to change them
+    vdir = os.path.join(run, "verbalized")
+    for r in read_tsv(tsv_path(run, "verbalized")):
+        f = fin.setdefault(r["file"], {"file": r["file"], "kind": "verbalized", "n_numbers": 0, "n_pending": 0,
+                                       "n_verified": 0})
+        f["n_numbers"] += 1
+        f["n_verified"] += r.get("status") == "verified"
+    for stem, f in fin.items():
+        if os.path.exists(os.path.join(vdir, stem + ".json")):
+            files[("verbalized", stem)] = f
     out = []
     for f in files.values():
         f["has_copy"] = os.path.exists(os.path.join(run, f["kind"], f["file"] + ".json"))
         f["has_audio"] = _find_wav(st.get("audio_dir"), f["file"]) is not None
         out.append(f)
-    out.sort(key=lambda f: (KINDS.index(f["kind"]), -f.get("n_pending", 0), f["file"]))
-    return {"files": out, "counts": {k: sum(f["kind"] == k for f in out) for k in KINDS}}
+    out.sort(key=lambda f: (OPEN_KINDS.index(f["kind"]), -f.get("n_pending", 0), f["file"]))
+    return {"files": out, "counts": {k: sum(f["kind"] == k for f in out) for k in OPEN_KINDS}}
 
 
 def _file_rows(run, stem, kind="verify"):
@@ -241,8 +253,8 @@ def _load(run, stem, kind):
 def _load_rev(run, stem, kind):
     """(path, document, rev): rev is a hash of the file's bytes, so a save can tell whether the
     copy changed since the page was opened (a second Save, another tab)."""
-    if kind not in KINDS:
-        raise ValueError("kind must be verify, reverify or failed")
+    if kind not in OPEN_KINDS:
+        raise ValueError("kind must be verify, reverify, failed or verbalized")
     src = os.path.join(run, kind, stem + ".json")
     if not os.path.exists(src):
         raise ValueError(f"{kind}/{stem}.json is missing (already verified?)")
@@ -449,10 +461,18 @@ def _full_choices(plans, given):
     return out, decided, later
 
 
-def api_candidates(st, text, style=None):
+def text_language(text):
+    """'hi' when the text has more Devanagari than Malayalam letters, else 'ml'."""
+    dev = sum(1 for c in text if 0x0900 <= ord(c) <= 0x097F and c.isalpha())
+    mal = sum(1 for c in text if 0x0D00 <= ord(c) <= 0x0D7F and c.isalpha())
+    return "hi" if dev > mal else "ml"
+
+
+def api_candidates(st, text, style=None, lang=None):
     """Candidate generator: every number in ``text`` with all its readings. ``phrase`` = the whole
     input with that reading in place (other numbers default), so '55000 രൂപയുടെ' gives
-    'അമ്പത്തയ്യായിരം രൂപയുടെ' ready to use as a custom reading."""
+    'അമ്പത്തയ്യായിരം രൂപയുടെ' ready to use as a custom reading. ``lang``: ml / hi, or None to
+    decide from the text (Devanagari -> hi)."""
     from .. import candidates as _cands, find as _find, verbalize as _verb
     from ..detect import join_currency
     text = join_currency(" ".join(str(text or "").split()))
@@ -460,6 +480,9 @@ def api_candidates(st, text, style=None):
         raise ValueError("type a number, e.g. 55000, 250യിൽ, 4:30-ന്, 12.5%")
     cfg = run_config(st["run_dir"]) if is_run_dir(st.get("run_dir")) else ScoringConfig()
     style = style or cfg.style
+    lang = lang or text_language(text)
+    if lang not in ("ml", "hi"):
+        raise ValueError(f"language must be ml or hi, not {lang!r}")
     spans = list(_find(text))
     if not spans:
         raise ValueError(f"no number found in {text!r}")
@@ -468,17 +491,18 @@ def api_candidates(st, text, style=None):
     groups = []
     for i, sp in enumerate(spans):
         from .. import next_word as _nw
-        cands = _cands(sp, style=style, latin=eng, next_word=_nw(text, sp))
+        cands = _cands(sp, lang=lang, style=style, latin=eng, next_word=_nw(text, sp))
         rows = []
         for k, c in enumerate(cands):
             def pick(span, cs, c=c):
                 return c.text if span.start == sp.start else None
             rows.append({"text": c.text, "form": c.form, "lang": c.lang,
-                         "phrase": _verb(text, style=style, chooser=pick, latin=eng),
+                         "phrase": _verb(text, lang=lang, style=style, chooser=pick, latin=eng),
                          "scored": k < cfg.max_candidates})
         groups.append({"token": sp.text, "core": sp.core, "class": sp.cls, "candidates": rows,
-                       "suffix_issue": (ml.suffix_issue(sp.core) if sp.cls == "num_suffix" else None) or ""})
-    return {"text": text, "style": style, "max_candidates": cfg.max_candidates, "groups": groups}
+                       "suffix_issue": (ml.suffix_issue(sp.core) if sp.cls == "num_suffix" and lang == "ml"
+                                        else None) or ""})
+    return {"text": text, "style": style, "lang": lang, "max_candidates": cfg.max_candidates, "groups": groups}
 
 
 def api_preview(st, body):
@@ -591,6 +615,8 @@ def api_save(st, body):
         edits = body.get("edits") or {}
         if edits and kind == "failed":
             raise ValueError("only numbers of a verify / reverify file can be re-edited")
+        if kind == "verbalized" and not edits:
+            raise ValueError("nothing changed: edit a decided number first")
         if edits:                                         # re-edit decided numbers: rebuild from the input
             orig, oplans, full, changes, later = _rebuild(run, stem, cfg, mine, body.get("picks"), edits, st)
             if not changes:
@@ -655,7 +681,12 @@ def api_save(st, body):
             frows = read_tsv(tsv_path(run, "failed"))
             write_tsv(tsv_path(run, "failed"), COLS["failed"], [r for r in frows if r.get("file") != stem])
 
-        if later == 0:                                    # complete -> verbalized
+        if kind == "verbalized":                          # a finished file edited: stays in verbalized/
+            if later:
+                raise Misaligned(f"{later} number(s) of a finished file are pending in verbalized.tsv")
+            _write_json_atomic(os.path.join(run, "verbalized", stem + ".json"), out)
+            write_tsv(tsv_path(run, "verbalized"), NUMBER_COLS, others + mine)
+        elif later == 0:                                  # complete -> verbalized
             # new state first (json, then its rows in verbalized.tsv), old state last (rows out of
             # verify.tsv, then the copy): a crash or a locked file leaves a duplicate, never a loss
             os.makedirs(os.path.join(run, "verbalized"), exist_ok=True)
@@ -747,7 +778,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._need_run(st)
                 self._json(api_file(st, q.get("file"), q.get("kind")))
             elif u.path == "/api/candidates":
-                self._json(api_candidates(st, q.get("q", ""), q.get("style") or None))
+                self._json(api_candidates(st, q.get("q", ""), q.get("style") or None, q.get("lang") or None))
             elif u.path == "/api/audio":
                 self._audio(st, q.get("file"))
             else:

@@ -23,7 +23,7 @@ aside .tools{padding:8px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px s
 .f.sel{background:var(--accbg)}.f .n{font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all}
 .f .m{font-size:12px;color:var(--muted)}
 .pill{display:inline-block;padding:0 7px;border-radius:10px;font-size:12px}
-.verify{background:var(--warnbg);color:var(--warn)}.reverify{background:var(--accbg);color:var(--accent)}.failed{background:var(--badbg);color:var(--bad)}.done{background:var(--okbg);color:var(--ok)}
+.verify{background:var(--warnbg);color:var(--warn)}.reverify{background:var(--accbg);color:var(--accent)}.failed{background:var(--badbg);color:var(--bad)}.done,.verbalized{background:var(--okbg);color:var(--ok)}
 section#view{flex:1;overflow:auto;padding:14px 18px 80px}
 .muted{color:var(--muted)}.warn{color:#c2410c;font-size:13px}.help{font-size:13px;color:var(--muted)}
 .card{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin:12px 0;padding:10px 12px}
@@ -73,7 +73,7 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:8px 0;
 <main>
  <aside>
   <div class="tools">
-   <select id="kind"><option value="">all</option><option value="verify">verify</option><option value="reverify">reverify</option><option value="failed">failed</option></select>
+   <select id="kind"><option value="">all</option><option value="verify">verify</option><option value="reverify">reverify</option><option value="failed">failed</option><option value="verbalized" title="finished files decided by the model only (no number verified by hand)">verbalized (auto)</option><option value="verified" title="finished files with numbers verified by hand">verified</option></select>
    <input id="q" placeholder="search file" style="flex:1;min-width:100px">
   </div>
   <div id="files"><p class="help" style="padding:10px">Load a run folder to see the files to check.</p></div>
@@ -114,10 +114,11 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:8px 0;
  <div style="display:flex;gap:8px;justify-content:flex-end"><button id="bcancel">Cancel</button><button class="primary" id="bok">Use this folder</button></div>
 </dialog>
 <dialog id="gdlg"><b>Candidate generator</b>
- <p class="help" style="margin:4px 0 8px">Type a number or a short phrase (55000, 250യിൽ, 4:30-ന്, 12.5%, <i>55000 രൂപയുടെ</i>).
+ <p class="help" style="margin:4px 0 8px">Type a number or a short phrase (55000, 250യിൽ, 4:30-ന്, 12.5%, <i>55000 രൂപയുടെ</i>; Hindi: <i>428 रुपये</i>, or pick Hindi).
  Every reading is listed; <b>Use</b> puts the whole phrase into the current number's custom box (it replaces the full token).</p>
  <div style="display:flex;gap:6px"><input id="gq" style="flex:1" placeholder="e.g. 55000 രൂപയുടെ">
   <select id="gstyle" title="default spelling style"><option value="">run style</option><option>contracted</option><option>glide</option></select>
+  <select id="glang" title="language of the readings"><option value="">auto</option><option value="ml">Malayalam</option><option value="hi">Hindi</option></select>
   <button class="primary" id="ggo">Generate</button></div>
  <div id="gout" style="max-height:60vh;overflow:auto;margin-top:8px"></div>
  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><span id="gtarget" class="help" style="flex:1"></span><button id="gclose">Close</button></div>
@@ -159,8 +160,8 @@ function openGen(){var x=S.cur&&S.flat?S.flat[S.focus]:null;G.target=x||null;
  $('gtarget').textContent=x?('Use → number '+numOf(x).core+' (sentence '+x[0]+')'):'Open a file to use a reading; Copy works anyway.';
  if(x&&!$('gq').value)$('gq').value=numOf(x).core;$('gdlg').showModal();$('gq').focus();$('gq').select();if($('gq').value)gen();}
 function gen(){var q=$('gq').value.trim();if(!q){$('gout').innerHTML='';return;}
- api('/api/candidates?q='+encodeURIComponent(q)+'&style='+encodeURIComponent($('gstyle').value)).then(function(r){
-  var h='';r.groups.forEach(function(g,gi){h+='<h4 style="margin:10px 0 4px"><mark>'+esc(g.token)+'</mark> <span class="muted">'+esc(g.class)+' · '+g.candidates.length+' readings</span>'+
+ api('/api/candidates?q='+encodeURIComponent(q)+'&style='+encodeURIComponent($('gstyle').value)+'&lang='+encodeURIComponent($('glang').value)).then(function(r){
+  var h='';r.groups.forEach(function(g,gi){h+='<h4 style="margin:10px 0 4px"><mark>'+esc(g.token)+'</mark> <span class="muted">'+esc(g.class)+' · '+esc(r.lang)+' · '+g.candidates.length+' readings</span>'+
    (g.suffix_issue?' <span class="warn">suffix: '+esc(g.suffix_issue)+'</span>':'')+'</h4><div class="cands">';
    g.candidates.forEach(function(c,i){h+='<label style="cursor:default"><span class="k">'+(i+1)+'</span> <span>'+esc(c.text)+'</span> <span class="muted" style="font-size:12px">'+esc(c.form)+(c.scored?'':' · beyond max_candidates ('+r.max_candidates+'), not scored by verbalize')+'</span>'+
     (c.phrase!==c.text?'<span class="muted" style="font-size:12px"> → '+esc(c.phrase)+'</span>':'')+'<span style="flex:1"></span>'+
@@ -179,17 +180,18 @@ function useGen(t){var x=G.target;if(!x)return;
 $('gen').onclick=openGen;$('ggo').onclick=gen;$('gclose').onclick=function(){$('gdlg').close();};
 $('gq').onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();gen();}};
 $('gq').oninput=function(){clearTimeout(G.timer);G.timer=setTimeout(gen,300);};
-$('gstyle').onchange=gen;
+$('gstyle').onchange=gen;$('glang').onchange=gen;
 $('bok').onclick=function(){$(B.target).value=$('bpath').value;$('browse').close();};
 
 // ---------------------------------------------------------------- file list
 function loadFiles(){return api('/api/files').then(function(r){S.files=r.files;renderFiles();});}
+function fileKind(f){return f.kind==='verbalized'&&f.n_verified?'verified':f.kind;}   // finished: auto vs by hand
 function renderFiles(){var k=$('kind').value,q=$('q').value.toLowerCase();
- var fs=S.files.filter(function(f){return (!k||f.kind===k)&&(!q||f.file.toLowerCase().indexOf(q)>=0);});
+ var fs=S.files.filter(function(f){return fileKind(f)===k||(!k&&f.kind!=='verbalized')?(!q||f.file.toLowerCase().indexOf(q)>=0):false;});
  $('files').innerHTML=fs.length?fs.map(function(f){return '<div class="f'+(S.cur&&S.cur.file===f.file&&S.cur.kind===f.kind?' sel':'')+'" data-f="'+esc(f.file)+'" data-k="'+f.kind+'">'+
-  '<div><span class="pill '+f.kind+'">'+f.kind+'</span> <span class="n">'+esc(f.file)+'</span></div><div class="m">'+
-  (f.kind!=='failed'?(f.n_pending||0)+' open of '+(f.n_numbers||0)+' numbers':esc((f.stage||'')+': '+(f.error||'')))+
-  (f.has_audio?'':' · no audio')+(f.has_copy===false?' · copy missing':'')+'</div></div>';}).join(''):'<p class="help" style="padding:10px">Nothing left to check here 🎉</p>';
+  '<div><span class="pill '+f.kind+'">'+fileKind(f)+'</span> <span class="n">'+esc(f.file)+'</span></div><div class="m">'+
+  (f.kind==='verbalized'?(f.n_numbers||0)+' numbers'+(f.n_verified?' · '+f.n_verified+' verified by hand':' · all auto'):f.kind!=='failed'?(f.n_pending||0)+' open of '+(f.n_numbers||0)+' numbers':esc((f.stage||'')+': '+(f.error||'')))+
+  (f.has_audio?'':' · no audio')+(f.has_copy===false?' · copy missing':'')+'</div></div>';}).join(''):'<p class="help" style="padding:10px">'+(k==='verbalized'?'No finished files decided by the model only.':k==='verified'?'No finished files verified by hand yet.':'Nothing left to check here 🎉 (finished files: pick <b>verbalized</b> or <b>verified</b> above)')+'</p>';
  $('files').querySelectorAll('.f').forEach(function(el){el.onclick=function(){openFile(el.dataset.f,el.dataset.k);};});}
 $('kind').onchange=renderFiles;$('q').oninput=renderFiles;
 
@@ -199,13 +201,14 @@ function openFile(name,kind){api('/api/file?file='+encodeURIComponent(name)+'&ki
  d.sentences.forEach(function(s){S.choice[s.idx]=s.numbers.map(function(n){return n.model_pick;});s.numbers.forEach(function(n,j){S.flat.push([s.idx,j]);});});
  var au=$('au');au.pause();au.src=d.has_audio?'/api/audio?file='+encodeURIComponent(name):'';
  S.tab='check';S.pv={};S.edits={};S.editing=null;renderFile();renderFiles();$('foot').style.display='flex';preview();
- S.focus=0;setTab('check');
+ S.focus=0;setTab(S.flat.length?'check':'review');
 }).catch(function(e){toast(e.message,6000);});}
 function numOf(x){var s=S.doc.sentences.find(function(s){return s.idx===x[0];});return s.numbers[x[1]];}
 function hl(text,cores){var t=esc(text);cores.forEach(function(c){var e=esc(c);t=t.split(e).join('<mark>'+e+'</mark>');});return t;}
 function renderFile(){var d=S.doc,h='';
  h+='<h2 style="margin:0 0 4px">'+esc(d.file)+' <span class="pill '+d.kind+'">'+d.kind+'</span></h2>';
- if(d.kind==='failed')h+='<p class="help">Failed at <b>'+esc((d.info||{}).stage)+'</b>: '+esc((d.info||{}).error)+'. No model scores: candidates are in default order; the first is pre-selected.</p>';
+ if(d.kind==='verbalized')h+='<p class="help">Finished file: every number is decided. Change any of them under <b>Already decided</b> (Review tab); Save rewrites it in verbalized/.</p>';
+ else if(d.kind==='failed')h+='<p class="help">Failed at <b>'+esc((d.info||{}).stage)+'</b>: '+esc((d.info||{}).error)+'. No model scores: candidates are in default order; the first is pre-selected.</p>';
  else h+='<p class="help">'+esc((d.info||{}).reasons||'')+(d.info&&d.info.total?' · '+d.info.decided+' of '+d.info.total+' numbers already decided (verbalized in this file)':'')+'</p>';
  if(!d.has_audio)h+='<p class="help">⚠ no audio for this file in the audio folder — you can still choose readings.</p>';
  if(d.error){h+='<p class="help" style="color:var(--bad)">'+esc(d.error)+'</p>';$('view').innerHTML=h;$('save').disabled=true;return;}
@@ -244,10 +247,10 @@ function preview(){if(!S.cur||S.doc.error)return;api('/api/preview',{file:S.cur.
  if(r.invalid){$('status').textContent='⚠ '+r.invalid;$('save').disabled=true;return;}
  S.pv=r.preview;Object.keys(r.preview).forEach(function(k){var el=$('p'+k);if(el)el.innerHTML='→ '+esc(r.preview[k]);});
  var open=0;Object.keys(S.choice).forEach(function(k){S.choice[k].forEach(function(v){if(!String(v==null?'':v).trim())open++;});});
- var dec=S.flat.length-open;$('status').textContent=dec+' of '+S.flat.length+' open number(s) decided'+(open?' · '+open+' left for later: Save keeps the file in verify/':' · Save moves the file to verbalized/');
+ var dec=S.flat.length-open,fin=S.cur.kind==='verbalized';$('status').textContent=fin?'finished file':dec+' of '+S.flat.length+' open number(s) decided'+(open?' · '+open+' left for later: Save keeps the file in verify/':' · Save moves the file to verbalized/');
  var ned=Object.keys(S.edits||{}).length;
  if(ned)$('status').textContent+=' · '+ned+' decided number(s) changed';
- if($('save')){$('save').disabled=!dec&&!ned;$('save').textContent=open?'Save (keep '+open+' open)':'Save → verbalized';}
+ if($('save')){$('save').disabled=!dec&&!ned;$('save').textContent=fin?'Save changes':open?'Save (keep '+open+' open)':'Save → verbalized';}
  if($('tcount'))$('tcount').textContent=dec+'/'+S.flat.length;if(S.tab==='review')renderReview();}).catch(function(){});}
 function setTab(t){if(!$('pane-check'))return;S.tab=t;var c=t==='check';
  $('pane-check').style.display=c?'':'none';$('pane-review').style.display=c?'none':'';
@@ -315,10 +318,12 @@ function save(){if(!S.cur||!$('save')||$('save').disabled||S.saving)return;var d
  S.saving=true;$('save').disabled=true;                 // one save at a time (no double Ctrl+Enter)
  var old=S.files.slice(),i=old.findIndex(function(f){return f.file===done.file&&f.kind===done.kind;});
  api('/api/save',{file:done.file,kind:done.kind,rev:S.doc.rev,picks:picks(),edits:S.edits}).then(function(r){
+  if(done.kind==='verbalized'){toast('✓ '+r.file+': '+r.decided+' change(s) saved in verbalized/'+(r.typed?' · '+r.typed+' typed reading(s) logged':''));
+   return state().then(function(){openFile(done.file,'verbalized');});}
   toast((r.done?'✓ '+r.file+' → verbalized':'✓ '+r.file+': '+r.decided+' saved, '+r.open+' still open (in '+done.kind.replace('failed','verify')+'/)')+(r.typed?' · '+r.typed+' typed reading(s) saved to typed_readings.tsv':''));
   return state().then(function(){var k=$('kind').value;      // next file from the FRESH list
    var after=old.slice(i+1).concat(old.slice(0,Math.max(i,0))).map(function(f){return f.file+'|'+f.kind;});
-   var live=S.files.filter(function(f){return (!k||f.kind===k)&&!(f.file===done.file);});
+   var live=S.files.filter(function(f){return (k?fileKind(f)===k:f.kind!=='verbalized')&&!(f.file===done.file);});
    var next=live.slice().sort(function(a,b){var x=after.indexOf(a.file+'|'+a.kind),y=after.indexOf(b.file+'|'+b.kind);return (x<0?1e9:x)-(y<0?1e9:y);})[0];
    if(!next&&!r.done)next=S.files.find(function(f){return f.file===done.file;});   // only this file is left: reopen it
    if(next)openFile(next.file,next.kind);else{S.cur=null;$('view').innerHTML='<h2>All done 🎉</h2><p>Nothing left in this list.</p>';$('foot').style.display='none';}});

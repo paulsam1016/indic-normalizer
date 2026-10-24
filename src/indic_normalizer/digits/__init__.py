@@ -31,20 +31,20 @@ from __future__ import annotations
 
 from typing import Callable, List, Optional, Union
 
-from . import ml
+from . import hi, ml
 from .detect import CLASSES, classify, find
 from .types import Candidate, NumberSpan
 
 Chooser = Callable[[NumberSpan, List[Candidate]], Union[Candidate, str, int]]
 
-_LANGS = {"ml": ml, "mal": ml, "malayalam": ml}
+_LANGS = {"ml": ml, "mal": ml, "malayalam": ml, "hi": hi, "hin": hi, "hindi": hi}
 
 
 def _lang(lang: str):
     try:
         return _LANGS[str(lang).lower()]
     except KeyError:
-        raise ValueError(f"digits: unsupported language {lang!r}; available: ml") from None
+        raise ValueError(f"digits: unsupported language {lang!r}; available: ml, hi") from None
 
 
 def candidates(number: Union[str, NumberSpan], lang: str = "ml",

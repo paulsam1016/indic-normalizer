@@ -87,12 +87,12 @@ def test_verifier_flow(run):
     assert not r["done"] and read_tsv(str(rd / "failed.tsv")) == [] and not (rd / "failed" / "b.json").exists()
     assert (rd / "verify" / "b.json").exists()
     assert [(x["number"], x["status"]) for x in read_tsv(str(rd / "verify.tsv"))] == [("25", "verified"), ("4", "pending")]
-    assert [f["kind"] for f in V.api_files(st)["files"]] == ["verify"]
+    assert [(f["file"], f["kind"]) for f in V.api_files(st)["files"]] == [("b", "verify"), ("a", "verbalized")]
     V.api_save(st, {"file": "b", "kind": "verify", "choices": {b1: ["നാല്"]}})
     assert {x["file"] for x in read_tsv(str(rd / "verbalized.tsv"))} == {"a", "b"}
     s = json.load(open(rd / "summary.json", encoding="utf-8"))
     assert (s["verbalized"], s["verify"], s["failed"], s["verified"]) == (2, 0, 0, 2)
-    assert V.api_files(st)["files"] == []
+    assert [f["kind"] for f in V.api_files(st)["files"]] == ["verbalized", "verbalized"]   # only finished ones left
     with pytest.raises(ValueError):
         V.api_file(st, "../x", "verify")
 
@@ -381,3 +381,44 @@ def test_status_files_without_numbers_are_fine(run, tmp_path):
                                               encoding="utf-8")
     rep = run_status(str(rd), str(tmp_path / "data"))
     assert rep["verbalized_without_numbers"] == ["c"] and "c" not in rep["verbalized_without_rows"]
+
+
+def test_edit_finished_file(run, tmp_path):
+    rd, audio = run
+    st = {}
+    V.api_open(st, {"run_dir": str(rd), "audio_dir": str(audio)})
+    d = V.api_file(st, "a", "verify")
+    i25, i4 = [n["id"] for x in d["sentences"] for n in x["numbers"]]
+    V.api_save(st, {"file": "a", "kind": "verify", "rev": d["rev"], "picks": {i25: "ട്വന്റി ഫൈവ്", i4: "നാല്"}})
+    assert (rd / "verbalized" / "a.json").exists() and not (rd / "verify" / "a.json").exists()
+
+    files = {(f["file"], f["kind"]): f for f in V.api_files(st)["files"]}
+    f = files[("a", "verbalized")]
+    assert f["n_numbers"] == 2 and f["n_verified"] == 2 and f["n_pending"] == 0
+    d = V.api_file(st, "a", "verbalized")
+    assert d["sentences"] == [] and d["can_edit_decided"]
+    assert [(x["id"], x["final_pick"]) for x in d["decided"]] == [(i25, "ട്വന്റി ഫൈവ്"), (i4, "നാല്")]
+    with pytest.raises(ValueError, match="nothing changed"):
+        V.api_save(st, {"file": "a", "kind": "verbalized", "rev": d["rev"]})
+    pv = V.api_preview(st, {"file": "a", "kind": "verbalized", "edits": {i4: "ഫോർ"}})["preview"]
+    assert pv[1] == "ശരി ഫോർ പേര്"
+
+    r = V.api_save(st, {"file": "a", "kind": "verbalized", "rev": d["rev"], "edits": {i4: "ഫോർ"}})
+    assert r["decided"] == 1 and r["done"]
+    out = json.load(open(rd / "verbalized" / "a.json", encoding="utf-8"))
+    assert [x["text"] for x in out["sentences"]][:2] == ["ഫീസ് ട്വന്റി ഫൈവ് ആണ്", "ശരി ഫോർ പേര്"]
+    v = read_tsv(str(rd / "verbalized.tsv"))
+    assert [(x["number"], x["status"], x["final_pick"]) for x in v if x["file"] == "a"] == \
+        [("25", "verified", "ട്വന്റി ഫൈവ്"), ("4", "verified", "ഫോർ")]
+    assert not (rd / "verify" / "a.json").exists() and not read_tsv(str(rd / "verify.tsv"))
+    dec = read_tsv(str(rd / "verifier_decisions.tsv"))
+    assert dec[-1]["kind"] == "verbalized" and dec[-1]["chosen"] == "ഫോർ" and dec[-1]["action"] == "edit"
+    with pytest.raises(V.Conflict):                    # the old rev is stale now
+        V.api_save(st, {"file": "a", "kind": "verbalized", "rev": d["rev"], "edits": {i4: "നാല്"}})
+
+    # without the original input the finished file can only be viewed
+    os.replace(tmp_path / "data" / "a.json", tmp_path / "a.json")
+    d = V.api_file(st, "a", "verbalized")
+    assert not d["can_edit_decided"]
+    with pytest.raises(ValueError, match="original input"):
+        V.api_save(st, {"file": "a", "kind": "verbalized", "rev": d["rev"], "edits": {i4: "നാല്"}})
