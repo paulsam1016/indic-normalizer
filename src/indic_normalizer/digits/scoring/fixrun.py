@@ -28,7 +28,7 @@ def _stems(d: str) -> set:
 
 
 def fix_run(run: str, dry_run: bool = False, log=print) -> Dict[str, List[str]]:
-    from ..verifier.server import _empty_trash, _remove
+    from ...verifier.server import _empty_trash, _remove
     run = os.path.abspath(run)
     rep = {k: [] for k in ("trash_emptied", "leftover_copies_removed", "rows_moved_to_verbalized",
                            "rows_dropped", "failed_rows_dropped", "rows_without_file", "copies_without_rows")}

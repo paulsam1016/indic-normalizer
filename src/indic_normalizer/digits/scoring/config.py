@@ -21,7 +21,7 @@ Example (``examples/digits_scoring.yaml``)::
                                         #   encoded, number's frames scored)
     pad_s: 0.25                         # audio padding around a segment / word window, seconds
     context_words: 1                    # word unit: neighbouring words included on each side
-    max_candidates: 12                  # readings scored per number (first = default)
+    max_candidates: 32                  # readings scored per number (first = default); v2: 16 cut 1.3% of numbers, 32 none (+1% scoring)
     style: contracted                   # default native compound style
     margin_threshold: 1.0               # nats; best-vs-best DIFFERENT reading below this -> needs_review
     style_margin: 2.0                   # nats; the audio's spelling (contracted / glide / spaced) is kept
@@ -30,6 +30,11 @@ Example (``examples/digits_scoring.yaml``)::
                                         #   number in it; else per sentence (isolated switches -> review)
     hyp_pad_s: 0.5                      # compare only: hypothesis text within sentence +- this (s)
     length_norm: false                  # compare NLL per token instead of total NLL
+    form_costs:                         # nats added to readings the audio over-picks (shorter text
+      nosuffix: 6.5                     #   scores lower): written suffix left out
+      short_split: 8.0                  #   digit by digit for a number of up to 3 digits (22 -> രണ്ട് രണ്ട്)
+      percent: 1.5                      #   പെർസെന്റ് (vs പെർസെന്റേജ്)
+      bare_hour: 1.0                    #   11:00 -> പതിനൊന്ന് (vs പതിനൊന്ന് മണി); {} = no costs
     sample_rate: 16000
     out_dir: null                       # verbalize root: OUT_DIR/<data dir>/{verbalized,verify,failed}/<stem>.json + details
 """
@@ -44,6 +49,10 @@ from typing import Optional
 HEADS = ("tdt", "ctc")
 UNITS = ("segment", "word", "window")
 
+
+
+# readings the audio score over-picks (see ScoringConfig.form_costs)
+DEFAULT_FORM_COSTS = {"nosuffix": 6.5, "short_split": 8.0, "percent": 1.5, "bare_hour": 1.0}
 
 @dataclass
 class ScoringConfig:
@@ -63,13 +72,16 @@ class ScoringConfig:
     unit: str = "segment"
     pad_s: float = 0.25
     context_words: int = 1
-    max_candidates: int = 12
+    max_candidates: int = 32
     style: str = "contracted"
     margin_threshold: float = 1.0
     style_margin: float = 2.0
     dominant_language_share: float = 0.8    # see latin.sentence_languages
     hyp_pad_s: float = 0.5
     length_norm: bool = False
+    # Fitted on the v1 + v2 verifier decisions (agreement with the person 54% -> 71%): the
+    # audio score prefers shorter readings, so these readings get a cost before the pick.
+    form_costs: Optional[dict] = None       # None = DEFAULT_FORM_COSTS; {} = none
     sample_rate: int = 16000
     out_dir: Optional[str] = None
 
@@ -88,6 +100,14 @@ class ScoringConfig:
             raise ValueError("dominant_language_share must be between 0.5 and 1")
         if self.style_margin < 0 or self.margin_threshold < 0:
             raise ValueError("style_margin and margin_threshold must be >= 0")
+        if self.form_costs is not None:
+            if not isinstance(self.form_costs, dict):
+                raise ValueError("form_costs must be a mapping, e.g. {nosuffix: 6.5}")
+            bad = set(self.form_costs) - set(DEFAULT_FORM_COSTS)
+            if bad:
+                raise ValueError(f"form_costs: unknown {sorted(bad)}; known: {sorted(DEFAULT_FORM_COSTS)}")
+            if any(not isinstance(v, (int, float)) or v < 0 for v in self.form_costs.values()):
+                raise ValueError("form_costs values must be numbers >= 0")
         if self.batch_size < 1 or self.max_candidates < 1:
             raise ValueError("batch_size and max_candidates must be >= 1")
         if self.compute_dtype not in (None, "float32", "bfloat16", "float16"):

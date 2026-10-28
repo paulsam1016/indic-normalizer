@@ -171,3 +171,73 @@ def test_english_ordinal_th_for_dates():
     assert "ordinal_th" not in c("45") and "ordinal_th" not in c("05")
     assert first("27") == "ഇരുപത്തേഴ്"                         # default unchanged
     assert [x.text for x in digits.candidates("10th") if x.lang == "en"] == ["ടെൻത്ത്"]
+
+
+def test_letter_abbreviations_are_words_written_joined():
+    from indic_normalizer.digits import candidates
+    for core in ("3ml", "3എംഎൽ", "3-എംഎൽ"):
+        assert [c.text for c in candidates(core)][:2] == ["മൂന്ന് എംഎൽ", "ത്രീ എംഎൽ"]
+    assert [c.text for c in candidates("5ജിബി")][:2] == ["അഞ്ച് ജിബി", "ഫൈവ് ജിബി"]
+    assert candidates("zg00")[0].text == "സെഡ്ജി പൂജ്യം പൂജ്യം"
+    assert candidates("3-ഇൽ")[0].text == "മൂന്നിൽ"            # case endings still glue on
+    assert candidates("10-ആണ്")[0].text == "പത്താണ്"
+
+
+def test_suffix_joining_after_am_and_english_words():
+    from indic_normalizer.digits import candidates
+    first = lambda core: [c.text for c in candidates(core)][:2]
+    assert first("200000യിൽ") == ["രണ്ട് ലക്ഷത്തിൽ", "ടു ലാകിൽ"]          # not ലക്ഷമിൽ
+    assert first("250000യിൽ")[0] == "രണ്ട് ലക്ഷത്തി അമ്പതിനായിരത്തിൽ"
+    assert first("10000-ത്തിലധികം") == ["പതിനായിരത്തിലധികം", "ടെൻ തൗസന്റിലധികം"]   # no doubled ത്തി
+    assert first("16000ത്തോളം") == ["പതിനാറായിരത്തോളം", "സിക്സ്റ്റീൻ തൗസന്റോളം"]
+    assert first("1000വും") == ["ആയിരവും", "വൺ തൗസന്റും"]
+    assert first("1000-ഉം")[0] == "ആയിരവും" and first("1000-ഓ")[0] == "ആയിരമോ"
+    assert first("100000-ഉടെ")[0] == "ഒരു ലക്ഷത്തിന്റെ"
+    assert first("50-ത്തോളം") == ["അമ്പതോളം", "ഫിഫ്റ്റിയോളം"]
+    assert first("15-ാമത്തെ")[0] == "പതിനഞ്ചാമത്തെ"
+    # English words after a number are separate words
+    assert "ട്വന്റി വൺ ഇയേഴ്സ്" in [c.text for c in candidates("21-ഇയേഴ്സ്")]
+    assert first("3-ഹവർ") == ["മൂന്ന് ഹവർ", "ത്രീ ഹവർ"]
+    assert first("3-അവറിന്")[1] == "ത്രീ അവറിന്" and first("2-വേ")[1] == "ടു വേ"
+
+
+def test_new_candidates_from_v2_typed_readings():
+    from indic_normalizer import digits
+    texts = lambda core, **kw: [c.text for c in digits.candidates(core, **kw)][:16]   # what gets scored
+    assert "പത്തായിരം" in texts("10000") and "ഒരു ലക്ഷത്തി പത്തായിരം" in texts("110000")
+    assert not any("പത്തായിര" in t for t in texts("20000") + texts("50000"))   # ഇരുപതിനായിരം stays
+    assert "രണ്ടായിരത്തി ഒരു നൂറ്" in texts("2100")
+    assert "ത്രീ ലാക് ഫിഫ്റ്റി ഫൈവിന്" in texts("355000-ന്") and "വൺ ലാക് നൈന്റി ഫൈവിൽ" in texts("195000ൽ")
+    assert "ത്രീ സീറോ" in texts("30")
+    # suffix said without its ന്
+    assert {"പതിനാലും", "ഫോർട്ടീൻത്തും"} <= set(texts("14-നും"))
+    assert {"ആറാണ്", "സിക്സ്ത്താണ്"} <= set(texts("6-നാണ്"))
+    assert {"ട്വന്റി സിക്സ്ത്താണ്", "ഇരുപത്താറല്ലേ"} <= set(texts("26-നാണ്") + texts("26-നല്ലേ"))
+    assert "പതിനഞ്ചാന്തി" in texts("15-ന്") and not any("ന്തി" in t for t in texts("45-ന്"))
+    assert not any(c.form.endswith("+no_n") for c in digits.candidates("23-നുള്ളിൽ"))
+    # a number alone in its sentence: trailing -ഏ
+    assert "എൺപത്തൊമ്പതേ" in texts("89", alone=True) and "എൺപത്തൊമ്പതേ" not in texts("89")
+    assert "പൂജ്യം ഏഴേ" in texts("07", alone=True)
+    assert digits.alone("89.") and digits.alone("83, 73.") and not digits.alone("ഇത് 89 ആണ്")
+    assert digits.verbalize("89.") == "എൺപത്തൊമ്പത്."          # the default reading is unchanged
+
+
+def test_new_candidates_from_v1_typed_readings():
+    from indic_normalizer import digits
+    from indic_normalizer.digits.ml import attach
+    texts = lambda core, **kw: [c.text for c in digits.candidates(core, **kw)][:16]
+    # a lost decimal point: before a lakh word, alone in the sentence, or before a unit
+    assert "ഫോർ പോയിന്റ് എയ്റ്റ് ഫൈവ്" in texts("485", alone=True)
+    assert "ഒന്നര" in texts("15", next_word="അവേഴ്സിന്") and "മൂന്നര" in texts("35", next_word="ലാക്കിൽ")
+    assert "രണ്ടര" not in texts("25") and "രണ്ടര" not in texts("25", next_word="ആണ്")
+    # half lakh
+    assert "രണ്ടര ലക്ഷം" in texts("250000") and "രണ്ടര ലക്ഷത്തിൽ" in texts("250000യിൽ")
+    assert not any("ലക്ഷം" in t and "ര " in t for t in texts("200000"))
+    # "one lakh" written 1000 / 10000
+    assert {"വൺ ലാക്", "ഒരു ലക്ഷം"} <= set(texts("1000")) and "വൺ ലാകിന്" in texts("10000-ന്")
+    assert "വൺ ലാക്" not in texts("2000")
+    # genitive written, dative said
+    assert "നാൽപ്പതിന്" in texts("40-ന്റെ") and "സിക്സ്റ്റി ടുവിന്" in texts("62-ന്റെ")
+    # ടു takes വ
+    assert [attach("ടു", s) for s in ("ന്", "ിൽ", "ന്റെ", "ും", "ൽ")] == ["ടുവിന്", "ടുവിൽ", "ടുവിന്റെ", "ടുവും", "ടുവിൽ"]
+    assert "നൈന്റി ടുവിൽ" in texts("92-ൽ") and attach("ത്രീ", "ന്") == "ത്രീക്ക്"

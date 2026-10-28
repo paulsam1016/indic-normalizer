@@ -1,4 +1,5 @@
-"""``indic-digits verifier``: check the numbers ``verbalize`` was unsure about, in the browser.
+"""``indic-verifier`` (also ``indic-digits verifier``): check the numbers ``verbalize`` was unsure
+about, and fix sentence text, in the browser.
 
 A small local web app (Python standard library only — no GPU, torch or numpy; Windows and Linux):
 a server on 127.0.0.1 serves one HTML page and a JSON API that reuses the verbalize code, so a
@@ -30,10 +31,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from ..scoring.config import ScoringConfig
-from ..scoring.details import COLS, NUMBER_COLS, SEP, read_tsv, tsv_path, write_tsv
-from ..scoring.pipeline import bare_core as _bc, plan_text, same_document
-from .. import ml
+from ..digits.scoring.config import ScoringConfig
+from ..digits.scoring.details import COLS, NUMBER_COLS, SEP, read_tsv, tsv_path, write_tsv
+from ..digits.scoring.pipeline import bare_core as _bc, plan_text, same_document
+from ..digits import ml
+from .sentences import append_edit, apply_edits, edit_sentence, edits_for, has_sentences, normalize as _norm_sentence
 from .ui import PAGE
 
 
@@ -66,23 +68,25 @@ def _save_settings(d):
 
 def is_run_dir(p: str) -> bool:
     return bool(p) and os.path.isdir(p) and any(
-        os.path.exists(os.path.join(p, x)) for x in ("verify.tsv", "failed.tsv", "verify", "failed",
+        os.path.exists(os.path.join(p, x)) for x in ("verify.tsv", "failed.tsv", "verify", "failed", "verbalized.tsv",
                                                      "reverify.tsv", "reverify"))
 
 
 KINDS = ("verify", "reverify", "failed")      # folders the verifier works on
-from ..scoring.details import TYPED_COLS  # noqa: E402,F401  (columns of typed_readings.tsv)
-from ..scoring.details import append_decisions, decision_record  # noqa: E402
+OPEN_KINDS = KINDS + ("verbalized",)           # + finished files, opened to change decided numbers
+from ..digits.scoring.details import TYPED_COLS  # noqa: E402,F401  (columns of typed_readings.tsv)
+from ..digits.scoring.details import append_decisions, decision_record  # noqa: E402
 
 
 def _rows_kind(kind):
-    """TSV holding a kind's number rows: reverify files -> reverify.tsv, the rest -> verify.tsv."""
-    return "reverify" if kind == "reverify" else "verify"
+    """TSV holding a kind's number rows: reverify files -> reverify.tsv, finished files ->
+    verbalized.tsv, the rest -> verify.tsv."""
+    return kind if kind in ("reverify", "verbalized") else "verify"
 
 
 def _log_typed(run, recs):
     """Typed readings -> <run>/typed_readings.tsv (details.append_typed)."""
-    from ..scoring.details import append_typed
+    from ..digits.scoring.details import append_typed
     append_typed(run, recs)
 
 
@@ -116,12 +120,93 @@ def _write_json_atomic(path, obj):
     os.replace(tmp, path)
 
 
+_AUDIO_INDEX = {}                            # audio dir -> (dir mtime, {stem: path})
+
+
 def _find_wav(audio_dir, stem):
-    for ext in (".wav", ".WAV"):
-        p = os.path.join(audio_dir or "", stem + ext)
-        if audio_dir and os.path.exists(p):
-            return p
-    return None
+    """<stem>.wav in the audio folder, from a listing of the folder made once (re-listed when the
+    folder changes) instead of one disk check per file."""
+    if not audio_dir:
+        return None
+    try:
+        mt = os.stat(audio_dir).st_mtime_ns
+    except OSError:
+        return None
+    hit = _AUDIO_INDEX.get(audio_dir)
+    if hit is None or hit[0] != mt:
+        idx = {}
+        try:
+            for fn in os.listdir(audio_dir):
+                if fn.endswith((".wav", ".WAV")):
+                    idx.setdefault(fn[:-4], os.path.join(audio_dir, fn))
+        except OSError:
+            pass
+        hit = _AUDIO_INDEX[audio_dir] = (mt, idx)
+    p = hit[1].get(stem)
+    return p if p and os.path.exists(p) else None
+
+
+_TSV_CACHE = {}                              # path -> ((mtime_ns, size), rows as read_tsv returns them)
+
+
+def _stat_key(path):
+    try:
+        s = os.stat(path)
+        return s.st_mtime_ns, s.st_size
+    except OSError:
+        return None
+
+
+def _rows(path, copy=True):
+    """read_tsv with a cache: a TSV is parsed again only when it changed on disk (another program
+    or a run writing it). ``copy=False`` only for callers that don't change the rows."""
+    key = _stat_key(path)
+    if key is None:
+        _TSV_CACHE.pop(path, None)
+        return []
+    hit = _TSV_CACHE.get(path)
+    if hit is None or hit[0] != key:
+        hit = _TSV_CACHE[path] = (key, read_tsv(path))
+    return [dict(r) for r in hit[1]] if copy else hit[1]
+
+
+def _as_read(cols, rows):
+    """Rows exactly as read_tsv would return them after writing. Rows that came out of the cache
+    unchanged are already in that form and are reused as they are (the slow part of a save was
+    cleaning every cell of every row again)."""
+    from ..digits.scoring.details import _clean
+    cached = {id(r) for _, rs in _TSV_CACHE.values() for r in rs}
+    keys = set(cols)
+    return [r if id(r) in cached and r.keys() == keys else {c: _clean(r.get(c)) for c in cols} for r in rows]
+
+
+def _write_rows(path, cols, rows):
+    """Atomic TSV write (temp file + rename, like details.write_tsv), fast: rows are cleaned only
+    when they changed, and written in one csv call."""
+    import csv
+    from operator import itemgetter
+    clean = _as_read(cols, rows)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f, delimiter="\t", lineterminator="\n")
+        w.writerow(cols)
+        if clean:
+            g = itemgetter(*cols)
+            w.writerows(map(g, clean) if len(cols) > 1 else ([g(r)] for r in clean))
+    os.replace(tmp, path)
+    key = _stat_key(path)
+    if key is not None:
+        _TSV_CACHE[path] = (key, clean)
+
+
+def _append_rows(path, cols, rows):
+    """Add rows at the end (no rewrite of the rest); the cache follows."""
+    from ..digits.scoring.details import append_tsv
+    before = _rows(path, copy=False) if os.path.exists(path) else []
+    append_tsv(path, cols, rows)
+    key = _stat_key(path)
+    if key is not None:
+        _TSV_CACHE[path] = (key, list(before) + _as_read(cols, rows))
 
 
 # ----------------------------------------------------------------------------- API
@@ -190,13 +275,13 @@ def api_files(st):
     by_kind = {}
     for kind in ("verify", "reverify"):
         by_file = by_kind[kind] = {}
-        for r in read_tsv(tsv_path(run, kind)):
+        for r in _rows(tsv_path(run, kind), copy=False):
             by_file.setdefault(r["file"], []).append(r)
             f = files.setdefault((kind, r["file"]), {"file": r["file"], "kind": kind, "n_numbers": 0,
                                                      "n_pending": 0, "reasons": r.get("file_reasons", "")})
             f["n_numbers"] += 1
             f["n_pending"] += r.get("status") == "pending"
-    for r in read_tsv(tsv_path(run, "failed")):
+    for r in _rows(tsv_path(run, "failed"), copy=False):
         files[("failed", r["file"])] = {"file": r["file"], "kind": "failed", "stage": r.get("stage"),
                                         "error": r.get("error")}
     for kind in KINDS:                                # copies without rows (TSV edited by hand) still show up
@@ -210,17 +295,27 @@ def api_files(st):
                     _remove(os.path.join(d, fn))
                     continue
                 files[(kind, stem)] = {"file": stem, "kind": kind}
+    fin = {}                                          # finished files (with numbers): open to change them
+    vdir = os.path.join(run, "verbalized")
+    for r in _rows(tsv_path(run, "verbalized"), copy=False):
+        f = fin.setdefault(r["file"], {"file": r["file"], "kind": "verbalized", "n_numbers": 0, "n_pending": 0,
+                                       "n_verified": 0})
+        f["n_numbers"] += 1
+        f["n_verified"] += r.get("status") == "verified"
+    for stem, f in fin.items():
+        if os.path.exists(os.path.join(vdir, stem + ".json")):
+            files[("verbalized", stem)] = f
     out = []
     for f in files.values():
         f["has_copy"] = os.path.exists(os.path.join(run, f["kind"], f["file"] + ".json"))
         f["has_audio"] = _find_wav(st.get("audio_dir"), f["file"]) is not None
         out.append(f)
-    out.sort(key=lambda f: (KINDS.index(f["kind"]), -f.get("n_pending", 0), f["file"]))
-    return {"files": out, "counts": {k: sum(f["kind"] == k for f in out) for k in KINDS}}
+    out.sort(key=lambda f: (OPEN_KINDS.index(f["kind"]), -f.get("n_pending", 0), f["file"]))
+    return {"files": out, "counts": {k: sum(f["kind"] == k for f in out) for k in OPEN_KINDS}}
 
 
 def _file_rows(run, stem, kind="verify"):
-    return [r for r in read_tsv(tsv_path(run, _rows_kind(kind))) if r.get("file") == stem]
+    return [dict(r) for r in _rows(tsv_path(run, _rows_kind(kind)), copy=False) if r.get("file") == stem]
 
 
 def _pending_by_sentence(rows):
@@ -241,8 +336,8 @@ def _load(run, stem, kind):
 def _load_rev(run, stem, kind):
     """(path, document, rev): rev is a hash of the file's bytes, so a save can tell whether the
     copy changed since the page was opened (a second Save, another tab)."""
-    if kind not in KINDS:
-        raise ValueError("kind must be verify, reverify or failed")
+    if kind not in OPEN_KINDS:
+        raise ValueError("kind must be verify, reverify, failed or verbalized")
     src = os.path.join(run, kind, stem + ".json")
     if not os.path.exists(src):
         raise ValueError(f"{kind}/{stem}.json is missing (already verified?)")
@@ -330,6 +425,7 @@ def _rebuild(run, stem, cfg, mine, picks, edits, st=None):
         except (KeyError, TypeError, ValueError):
             raise Misaligned(f"bad row in verify.tsv: {r.get('sentence')}/{r.get('number_index')}")
     full, changes, later, n_total = {}, [], 0, 0
+    edited = edits_for(run, stem)
     for p in plans:
         if not p["numbers"]:
             continue
@@ -345,6 +441,8 @@ def _rebuild(run, stem, cfg, mine, picks, edits, st=None):
             t = " ".join(str(t).split()) if t else ""
             if t and _DIGIT.search(t):
                 raise ValueError(f"reading for {n.span.core} contains digits ({t!r}): write it in words")
+            if t and not pending and t != r.get("final_pick") and p["idx"] in edited:
+                raise ValueError(f"sentence {p['idx']} was edited by hand: change {n.span.core} in the sentence text")
             if t and not (not pending and t == r.get("final_pick")):
                 changes.append((r, t))
                 texts.append(t)
@@ -410,11 +508,19 @@ def api_file(st, stem, kind):
         sents.append({"idx": p["idx"], "start": s.get("start_time"), "end": s.get("end_time"),
                       "speaker": s.get("speaker"), "text": s.get("text") or "", "numbers": nums})
     if kind == "failed":
-        info = next((r for r in read_tsv(tsv_path(run, "failed")) if r.get("file") == stem), {})
+        info = next((dict(r) for r in _rows(tsv_path(run, "failed"), copy=False) if r.get("file") == stem), {})
     else:
         info = {"reasons": (rows[0] if rows else {}).get("file_reasons", ""),
                 "decided": sum(r.get("status") in ("auto", "verified") for r in rows), "total": len(rows)}
+    edited = edits_for(run, stem)
+    can_sent = kind != "failed" and has_sentences(doc)
+    all_sents = [{"idx": k, "start": x.get("start_time"), "end": x.get("end_time"), "speaker": x.get("speaker"),
+                  "text": x.get("text") or "", "edited": k in edited,
+                  "original": (edited[k].get("original") if k in edited else "") or "",
+                  "locked": bool(_DIGIT.search(x.get("text") or ""))}
+                 for k, x in enumerate(_sentences_of(doc))] if can_sent else []
     decided = [{"id": f"{r.get('sentence')}:{r.get('number_index')}", "sentence": r.get("sentence"),
+                "sentence_edited": _int(r.get("sentence")) in edited,
                 "core": r.get("number"), "class": r.get("class"), "status": r.get("status"),
                 "final_pick": r.get("final_pick"), "model_pick": r.get("model_pick"),
                 "candidates": [c for c in (r.get("candidates") or "").split(SEP) if c],
@@ -423,6 +529,7 @@ def api_file(st, stem, kind):
                for r in _decided_rows(rows)]
     return {"file": stem, "kind": kind, "rev": rev, "sentences": sents, "info": info, "decided": decided,
             "can_edit_decided": bool(decided) and _original(run, stem, st) is not None,
+            "all_sentences": all_sents, "can_edit_sentences": can_sent,
             "has_audio": _find_wav(st.get("audio_dir"), stem) is not None,
             "n_sentences": len(doc.get("sentences") or [])}
 
@@ -449,36 +556,49 @@ def _full_choices(plans, given):
     return out, decided, later
 
 
-def api_candidates(st, text, style=None):
+def text_language(text):
+    """'hi' when the text has more Devanagari than Malayalam letters, else 'ml'."""
+    dev = sum(1 for c in text if 0x0900 <= ord(c) <= 0x097F and c.isalpha())
+    mal = sum(1 for c in text if 0x0D00 <= ord(c) <= 0x0D7F and c.isalpha())
+    return "hi" if dev > mal else "ml"
+
+
+def api_candidates(st, text, style=None, lang=None):
     """Candidate generator: every number in ``text`` with all its readings. ``phrase`` = the whole
     input with that reading in place (other numbers default), so '55000 രൂപയുടെ' gives
-    'അമ്പത്തയ്യായിരം രൂപയുടെ' ready to use as a custom reading."""
-    from .. import candidates as _cands, find as _find, verbalize as _verb
-    from ..detect import join_currency
+    'അമ്പത്തയ്യായിരം രൂപയുടെ' ready to use as a custom reading. ``lang``: ml / hi, or None to
+    decide from the text (Devanagari -> hi)."""
+    from ..digits import candidates as _cands, find as _find, verbalize as _verb
+    from ..digits.detect import join_currency
     text = join_currency(" ".join(str(text or "").split()))
     if not text:
         raise ValueError("type a number, e.g. 55000, 250യിൽ, 4:30-ന്, 12.5%")
     cfg = run_config(st["run_dir"]) if is_run_dir(st.get("run_dir")) else ScoringConfig()
     style = style or cfg.style
+    lang = lang or text_language(text)
+    if lang not in ("ml", "hi"):
+        raise ValueError(f"language must be ml or hi, not {lang!r}")
     spans = list(_find(text))
     if not spans:
         raise ValueError(f"no number found in {text!r}")
-    from ..latin import is_english
+    from ..digits.latin import is_english
     eng = is_english(text)                        # English input -> Latin-script readings
     groups = []
     for i, sp in enumerate(spans):
-        from .. import next_word as _nw
-        cands = _cands(sp, style=style, latin=eng, next_word=_nw(text, sp))
+        from ..digits import next_word as _nw
+        from ..digits import alone as _alone
+        cands = _cands(sp, lang=lang, style=style, latin=eng, next_word=_nw(text, sp), alone=_alone(text))
         rows = []
         for k, c in enumerate(cands):
             def pick(span, cs, c=c):
                 return c.text if span.start == sp.start else None
             rows.append({"text": c.text, "form": c.form, "lang": c.lang,
-                         "phrase": _verb(text, style=style, chooser=pick, latin=eng),
+                         "phrase": _verb(text, lang=lang, style=style, chooser=pick, latin=eng),
                          "scored": k < cfg.max_candidates})
         groups.append({"token": sp.text, "core": sp.core, "class": sp.cls, "candidates": rows,
-                       "suffix_issue": (ml.suffix_issue(sp.core) if sp.cls == "num_suffix" else None) or ""})
-    return {"text": text, "style": style, "max_candidates": cfg.max_candidates, "groups": groups}
+                       "suffix_issue": (ml.suffix_issue(sp.core) if sp.cls == "num_suffix" and lang == "ml"
+                                        else None) or ""})
+    return {"text": text, "style": style, "lang": lang, "max_candidates": cfg.max_candidates, "groups": groups}
 
 
 def api_preview(st, body):
@@ -499,13 +619,61 @@ def api_preview(st, body):
         raise
     except ValueError as e:                        # digits typed: show it, don't fail the preview
         return {"preview": {}, "invalid": str(e)}
-    from .. import verbalize as _verbalize
+    from ..digits import verbalize as _verbalize
     out = {}
+    edited = edits_for(run, stem)
     for p in plans:
-        if p["idx"] in full:
+        if p["idx"] in edited:
+            out[p["idx"]] = edited[p["idx"]].get("after") or ""
+        elif p["idx"] in full:
             it = iter(full[p["idx"]])
             out[p["idx"]] = _verbalize(p["text_train"], style=cfg.style, chooser=lambda span, cs: next(it))
     return {"preview": out}
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sentences_of(doc):
+    from ..digits.scoring.pipeline import _sentences
+    return _sentences(doc)
+
+
+def api_sentence(st, body):
+    """Change the text of one sentence of a verify / reverify / finished file (sentences.py). A
+    sentence whose numbers are still open (written as digits) can't be edited until they are
+    decided. Saved at once; returns the stored (normalized) text and the copy's new rev."""
+    run = st["run_dir"]
+    stem, kind = _safe_stem(body.get("file")), body.get("kind")
+    if kind == "failed":
+        raise ValueError("a failed file is the unchanged input: decide its numbers first (it moves to verify/)")
+    idx = _int(body.get("sentence"))
+    with _LOCK:
+        src, doc, rev = _load_rev(run, stem, kind)
+        if body.get("rev") and body["rev"] != rev:
+            raise Conflict(f"{kind}/{stem}.json changed since it was opened (saved already, or in another "
+                           f"tab) — reopen the file")
+        sents = _sentences_of(doc)
+        if not has_sentences(doc) or idx is None or not 0 <= idx < len(sents):
+            raise ValueError(f"no sentence {body.get('sentence')!r} in {stem}")
+        before = sents[idx].get("text") or ""
+        if _DIGIT.search(before):
+            raise ValueError(f"sentence {idx} still has open numbers: decide them first, then edit its text")
+        text = _norm_sentence(body.get("text"))
+        if text == before:
+            raise ValueError("nothing changed")
+        out = edit_sentence(doc, idx, text)
+        _write_json_atomic(src, out)
+        now = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        append_edit(run, {"saved_at": now, "file": stem, "kind": kind, "sentence": idx,
+                          "start_time": sents[idx].get("start_time"), "end_time": sents[idx].get("end_time"),
+                          "before": before, "after": text})
+        _, _, rev2 = _load_rev(run, stem, kind)
+    return {"ok": True, "file": stem, "sentence": idx, "text": text, "before": before, "rev": rev2}
 
 
 class Conflict(ValueError):
@@ -584,18 +752,21 @@ def api_save(st, body):
         cfg = run_config(run)
         plans = plan_text(doc, cfg)
         rk = _rows_kind(kind)                             # verify.tsv, or reverify.tsv for reverify/
-        vrows = read_tsv(tsv_path(run, rk))
-        mine = [r for r in vrows if r.get("file") == stem]
-        others = [r for r in vrows if r.get("file") != stem]
+        vrows = _rows(tsv_path(run, rk), copy=False)
+        mine = [dict(r) for r in vrows if r.get("file") == stem]          # changed below: copies
+        others = [r for r in vrows if r.get("file") != stem]              # written back as they are
         now = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
         edits = body.get("edits") or {}
         if edits and kind == "failed":
             raise ValueError("only numbers of a verify / reverify file can be re-edited")
+        if kind == "verbalized" and not edits:
+            raise ValueError("nothing changed: edit a decided number first")
         if edits:                                         # re-edit decided numbers: rebuild from the input
             orig, oplans, full, changes, later = _rebuild(run, stem, cfg, mine, body.get("picks"), edits, st)
             if not changes:
                 raise ValueError("nothing changed")
             out, _, _ = same_document(orig, oplans, cfg, choices=full)
+            out = apply_edits(run, stem, out)             # hand-edited sentences survive the rebuild
             typed = [r for r, t in changes if t not in (r.get("candidates") or "").split(SEP)]
             decisions = [decision_record(now, stem, kind, "pick" if r.get("status") == "pending" else "edit", r, t,
                                          previous=None if r.get("status") == "pending" else (r.get("final_pick") or ""))
@@ -636,7 +807,7 @@ def api_save(st, body):
             for si, k, n, t in decided:                   # aligned by _open_numbers (else Misaligned)
                 row_of[(si, k)].update(status="verified", final_pick=t, verified_at=now)
         else:                                             # failed: number rows created now (no scores)
-            frow = next((r for r in read_tsv(tsv_path(run, "failed")) if r.get("file") == stem), {})
+            frow = next((r for r in _rows(tsv_path(run, "failed"), copy=False) if r.get("file") == stem), {})
             reason = f"from failed/ ({frow.get('stage', '')}: {frow.get('error', '')})"
             chosen = {(si, k): t for si, k, _, t in decided}
             mine = []
@@ -652,17 +823,26 @@ def api_save(st, body):
                                  "file_reasons": reason, "status": "verified" if t else "pending",
                                  "final_pick": t or "", "verified_at": now if t else "",
                                  "sentence_text": p["sentence"].get("text") or ""})
-            frows = read_tsv(tsv_path(run, "failed"))
-            write_tsv(tsv_path(run, "failed"), COLS["failed"], [r for r in frows if r.get("file") != stem])
+            frows = _rows(tsv_path(run, "failed"), copy=False)
+            _write_rows(tsv_path(run, "failed"), COLS["failed"], [r for r in frows if r.get("file") != stem])
 
-        if later == 0:                                    # complete -> verbalized
+        if kind == "verbalized":                          # a finished file edited: stays in verbalized/
+            if later:
+                raise Misaligned(f"{later} number(s) of a finished file are pending in verbalized.tsv")
+            _write_json_atomic(os.path.join(run, "verbalized", stem + ".json"), out)
+            _write_rows(tsv_path(run, "verbalized"), NUMBER_COLS, others + mine)
+        elif later == 0:                                  # complete -> verbalized
             # new state first (json, then its rows in verbalized.tsv), old state last (rows out of
             # verify.tsv, then the copy): a crash or a locked file leaves a duplicate, never a loss
             os.makedirs(os.path.join(run, "verbalized"), exist_ok=True)
             _write_json_atomic(os.path.join(run, "verbalized", stem + ".json"), out)
             vp = tsv_path(run, "verbalized")
-            write_tsv(vp, NUMBER_COLS, [r for r in read_tsv(vp) if r.get("file") != stem] + mine)
-            write_tsv(tsv_path(run, rk), NUMBER_COLS, others)
+            old_v = _rows(vp, copy=False)
+            if any(r.get("file") == stem for r in old_v):            # rare: rows there already
+                _write_rows(vp, NUMBER_COLS, [r for r in old_v if r.get("file") != stem] + mine)
+            else:                                                     # usual: just add this file's rows
+                _append_rows(vp, NUMBER_COLS, mine)
+            _write_rows(tsv_path(run, rk), NUMBER_COLS, others)
             _bump(run, **{kind: -1, "verbalized": 1, "verified": 1})
             _remove(src)
             _remove(os.path.join(run, "input", stem + ".json"))    # input copy no longer needed
@@ -670,7 +850,7 @@ def api_save(st, body):
             folder = "reverify" if kind == "reverify" else "verify"
             os.makedirs(os.path.join(run, folder), exist_ok=True)
             _write_json_atomic(os.path.join(run, folder, stem + ".json"), out)
-            write_tsv(tsv_path(run, rk), NUMBER_COLS, others + mine)
+            _write_rows(tsv_path(run, rk), NUMBER_COLS, others + mine)
             if kind == "failed":                          # the failed copy IS the input: keep it
                 os.makedirs(os.path.join(run, "input"), exist_ok=True)
                 shutil.copyfile(src, os.path.join(run, "input", stem + ".json"))
@@ -747,7 +927,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._need_run(st)
                 self._json(api_file(st, q.get("file"), q.get("kind")))
             elif u.path == "/api/candidates":
-                self._json(api_candidates(st, q.get("q", ""), q.get("style") or None))
+                self._json(api_candidates(st, q.get("q", ""), q.get("style") or None, q.get("lang") or None))
             elif u.path == "/api/audio":
                 self._audio(st, q.get("file"))
             else:
@@ -770,6 +950,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/save":
                 self._need_run(st)
                 self._json(api_save(st, body))
+            elif path == "/api/sentence":
+                self._need_run(st)
+                self._json(api_sentence(st, body))
             elif path == "/api/preview":
                 self._need_run(st)
                 self._json(api_preview(st, body))
@@ -840,11 +1023,11 @@ def _parse_range(header, size):
     return start, end
 
 
-def serve(run_dir=None, audio_dir=None, port=8765, open_browser=True):
+def serve(run_dir=None, audio_dir=None, port=8765, open_browser=True, data_dir=None):
     st = _load_settings()
     if run_dir:
         try:
-            api_open(st, {"run_dir": run_dir, "audio_dir": audio_dir or ""})
+            api_open(st, {"run_dir": run_dir, "audio_dir": audio_dir or "", "data_dir": data_dir or ""})
         except ValueError as e:
             print(f"warning: {e}", file=sys.stderr)
     elif audio_dir:

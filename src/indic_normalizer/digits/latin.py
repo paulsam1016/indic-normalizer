@@ -32,10 +32,10 @@ def _is_ml(c: str) -> bool:
 
 
 def latin_share(text: str) -> float:
-    """Share of Latin letters among Latin + Malayalam letters (0 when there are none)."""
+    """Share of Latin letters among Latin + Malayalam / Devanagari letters (0 when there are none)."""
     lat = ml = 0
     for c in text or "":
-        if _is_ml(c):
+        if _is_ml(c) or ("\u0900" <= c <= "\u097f" and (c.isalpha() or unicodedata.category(c).startswith("M"))):
             ml += 1
         elif c.isalpha() and (c.isascii() or unicodedata.name(c, "").startswith("LATIN")):
             lat += 1

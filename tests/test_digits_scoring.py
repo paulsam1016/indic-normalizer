@@ -553,8 +553,8 @@ def test_num_suffix_has_bare_candidates():
 def test_suffix_issue_forces_review():
     from indic_normalizer.digits.scoring.pipeline import decide
     cfg = load_config(None)
-    # the bare number wins clearly -> reading is confident but still sent to verify
-    n = _suffix_number("27-ന്", {"contracted+nosuffix": 1.0, "contracted": 8.0})
+    # the bare number wins clearly (by more than the nosuffix cost) -> still sent to verify
+    n = _suffix_number("27-ന്", {"contracted+nosuffix": 1.0, "contracted": 10.0})
     d = decide(n, "segment", "tdt", cfg)
     assert n.cands[d["model_best"]].form.endswith("+nosuffix")
     assert d["suffix_issue"] and d["needs_review"] and d["review_margin"] > cfg.margin_threshold
@@ -685,7 +685,8 @@ def test_english_unit_word():
     assert c["ഫൈവ് മന്ത്"] == "english+en_unit" and c["അഞ്ച് മാസം"] == "contracted"
     assert not any("മന്ത്" in x.text for x in ml.candidates("5-മാസത്തിൽ"))     # case ending: no translation
     assert "ടു പോയിന്റ് ഫൈവ് ലാക്" in {x.text for x in ml.candidates("2.5-ലക്ഷം")}
-    assert not any(x.form == "digit_by_digit" for x in ml.candidates("30"))      # round numbers not split
+    assert "ത്രീ സീറോ" in {x.text for x in ml.candidates("30")}                   # round 2-digit: split too
+    assert not any(x.form == "digit_by_digit" for x in ml.candidates("100"))     # 100 / 1000 not split
 
 
 class Prefers(FakeScorer):
@@ -716,6 +717,9 @@ def test_reverify(dataset, monkeypatch):
     v[1].update(status="verified", final_pick="ഫോർ")
     write_tsv(str(rd / "verbalized.tsv"), NUMBER_COLS, v)
     malayalam = Prefers("ഇരുപത്തഞ്ച്", "നാല്")
+    tot = reverify(str(rd), str(audio), malayalam, cfg, dry_run=True, skip_verified=True, log=lambda *_: None)
+    assert (tot["numbers_flagged"], tot["flagged_auto"], tot["flagged_verified"]) == (1, 1, 0)   # 4 left alone
+    assert tot["numbers_checked"] == 2 and tot["skip_verified"]                # ... but still measured
     tot = reverify(str(rd), str(audio), malayalam, cfg, dry_run=True, log=lambda *_: None)
     assert tot["numbers_flagged"] == 2 and tot["flagged_verified"] == 1 and (rd / "verbalized" / "rec1.json").exists()
     rep = read_tsv(str(rd / "reverify_report.tsv"))
@@ -737,7 +741,7 @@ def test_reverify(dataset, monkeypatch):
     assert "25" in out["sentences"][0]["text"]                      # open again: written as digits
     s = json.load(open(rd / "summary.json", encoding="utf-8"))
     assert (s["verbalized"], s["reverify"]) == (0, 1)
-    from indic_normalizer.digits.verifier import server as V        # the verifier picks it up
+    from indic_normalizer.verifier import server as V        # the verifier picks it up
     monkeypatch.setattr(V, "SETTINGS", str(tmp / "settings.json"))
     st = {}
     V.api_open(st, {"run_dir": str(rd), "audio_dir": str(audio)})
@@ -910,3 +914,102 @@ def test_old_rows_without_currency_sign_still_align(tmp_path):
     write_tsv(str(rd / "verify.tsv"), NUMBER_COLS, rows)
     tot = reverify(str(rd), str(audio), sc, cfg, log=lambda *_: None)
     assert tot["waiting"]["files"] == 1 and tot["waiting"]["skipped_misaligned"] == 0
+
+
+def test_reverify_keeps_hand_edited_sentences(dataset, monkeypatch):
+    from indic_normalizer.digits.scoring.details import read_tsv
+    from indic_normalizer.digits.scoring.reverify import reverify
+    from indic_normalizer.verifier import server as V
+    monkeypatch.setattr(V, "SETTINGS", str(dataset[2] / "settings.json"))
+    data, audio, tmp = dataset
+    cfg = load_config(None, out_dir=str(tmp / "o"))
+    verbalize_dir(str(data), str(audio), Prefers("ട്വന്റി ഫൈവ്", "ഫോർ"), cfg, log=lambda *_: None)
+    rd = tmp / "o" / "data"
+    st = {}
+    V.api_open(st, {"run_dir": str(rd), "audio_dir": str(audio)})
+    d = V.api_file(st, "rec1", "verbalized")
+    V.api_sentence(st, {"file": "rec1", "kind": "verbalized", "rev": d["rev"], "sentence": 0,
+                        "text": "ഫീസ് ട്വന്റി ഫൈവ് രൂപ ആണ്"})
+    # the model now prefers Malayalam: 4 (auto) is flagged, 25 sits in a hand-edited sentence -> left alone
+    tot = reverify(str(rd), str(audio), Prefers("ഇരുപത്തഞ്ച്", "നാല്"), cfg, log=lambda *_: None)
+    assert tot["numbers_flagged"] == 1
+    flagged = [r for r in read_tsv(str(rd / "reverify.tsv")) if r.get("status") == "pending"]
+    assert [r["number"] for r in flagged] == ["4"]
+    copy = json.load(open(rd / "reverify" / "rec1.json", encoding="utf-8"))
+    assert copy["sentences"][0]["text"] == "ഫീസ് ട്വന്റി ഫൈവ് രൂപ ആണ്" and copy["sentences"][1]["text"].split()[1] == "4"
+
+
+def test_form_costs_shift_the_pick_from_short_readings():
+    from indic_normalizer.digits import find, candidates
+    from indic_normalizer.digits.scoring.pipeline import Number, decide, form_cost
+    from indic_normalizer.digits.scoring.config import DEFAULT_FORM_COSTS
+
+    def number(core, nll_of):
+        sp = next(iter(find(core)))
+        cs = candidates(sp)
+        n = Number(0, sp, cs, core)
+        n.scores[("segment", "tdt")] = [nll_of(c) for c in cs]
+        return n
+    # the audio prefers the bare number by 3 nats: with the default costs the suffix wins
+    n = number("27-ന്", lambda c: 10.0 if c.form.endswith("+nosuffix") else 13.0)
+    pick = lambda n, **kw: n.cands[decide(n, "segment", "tdt", load_config(None, **kw))["best"]].text
+    assert pick(n) == "ഇരുപത്തേഴിന്"
+    assert pick(number("27-ന്", lambda c: 10.0 if c.form.endswith("+nosuffix") else 13.0),
+                form_costs={}) == "ഇരുപത്തേഴ്"
+    d = decide(n, "segment", "tdt", load_config(None))
+    assert d["suffix_gap"] == 3.0 and d["nll"][d["best"]] == 13.0      # measured on the audio alone
+    # digit by digit: 22 costs extra, a 4-digit code or 07 does not
+    split22 = next(c for c in candidates("22") if c.form == "digit_by_digit")
+    assert form_cost(number("22", lambda c: 1.0), split22, DEFAULT_FORM_COSTS) == 8.0
+    split = next(c for c in candidates("4092") if c.form == "digit_by_digit")
+    assert form_cost(number("4092", lambda c: 1.0), split, DEFAULT_FORM_COSTS) == 0.0
+    assert form_cost(number("07", lambda c: 1.0), candidates("07")[0], DEFAULT_FORM_COSTS) == 0.0
+    with pytest.raises(ValueError, match="unknown"):
+        load_config(None, form_costs={"nosufix": 1})
+
+
+def test_reverify_resume_and_retry_failed(tmp_path):
+    from indic_normalizer.digits.scoring.details import read_tsv
+    from indic_normalizer.digits.scoring.reverify import reverify
+    data, audio = tmp_path / "data", tmp_path / "audio"
+    data.mkdir()
+    audio.mkdir()
+    for k in range(3):
+        (data / f"r{k}.json").write_text(json.dumps(DOC, ensure_ascii=False), encoding="utf-8")
+        _wav(audio / f"r{k}.wav", 4.0)
+    cfg = load_config(None, out_dir=str(tmp_path / "o"))
+    verbalize_dir(str(data), str(audio), Prefers("ട്വന്റി ഫൈവ്", "ഫോർ"), cfg, log=lambda *_: None)
+    rd = str(tmp_path / "o" / "data")
+    malayalam = Prefers("ഇരുപത്തഞ്ച്", "നാല്")              # now every auto pick changes -> flagged
+
+    class Stop(Exception):
+        pass
+
+    def stop_in_second(msg):          # interrupted while r1 is half done (its rows written, not moved)
+        if msg.startswith("[2/"):
+            raise Stop
+
+    with pytest.raises(Stop):
+        reverify(rd, str(audio), malayalam, cfg, log=stop_in_second, refresh=False)
+    assert os.path.exists(os.path.join(rd, "reverify", "r0.json"))       # r0 done and moved
+    assert os.path.exists(os.path.join(rd, "verbalized", "r1.json"))     # r1 not moved yet
+    (audio / "r2.wav").unlink()                                          # r2 will fail (no audio)
+    tot = reverify(rd, str(audio), malayalam, cfg, resume=True, log=lambda *_: None, refresh=False)
+    assert tot["this_run"]["files"] == 2                                 # r1 again + r2 (r0 has moved)
+    assert tot["files_flagged"] == 2 and tot["numbers_flagged"] == 4      # r0 + r1, r1's rows not doubled
+    assert tot["skipped_error"] == 1 and list(tot["failed_files"]) == ["r2"]
+    assert len(read_tsv(os.path.join(rd, "reverify_report.tsv"))) == 4
+    # --resume alone does not touch the failed file; --retry-failed does
+    tot = reverify(rd, str(audio), malayalam, cfg, resume=True, log=lambda *_: None, refresh=False)
+    assert tot["this_run"]["files"] == 0 and tot["resumed_skipped"] == 1
+    _wav(audio / "r2.wav", 4.0)
+    tot = reverify(rd, str(audio), malayalam, cfg, retry_failed=True, log=lambda *_: None, refresh=False)
+    assert tot["this_run"]["files"] == 1 and tot["skipped_error"] == 0
+    assert tot["files_flagged"] == 3 and tot["numbers_flagged"] == 6 and tot["flagged_auto"] == 6
+    s = json.load(open(os.path.join(rd, "summary.json"), encoding="utf-8"))
+    assert (s["verbalized"], s["reverify"]) == (0, 3)
+    # a dry-run session can't be resumed as a real run; a run without the flags starts afresh
+    with pytest.raises(ValueError, match="real run"):
+        reverify(rd, str(audio), malayalam, cfg, resume=True, dry_run=True, log=lambda *_: None, refresh=False)
+    tot = reverify(rd, str(audio), malayalam, cfg, log=lambda *_: None, refresh=False)
+    assert tot["files_checked"] == 0 and tot["numbers_flagged"] == 0    # new session, nothing left to check

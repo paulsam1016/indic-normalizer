@@ -110,8 +110,7 @@ indic-digits compare --config my.yaml DATA_DIR AUDIO_DIR --hyps-dir base_hypothe
 #   verify/<stem>.json      confident numbers verbalized, uncertain ones still digits (verify.tsv: pending)
 #   failed/<stem>.json      input, unchanged: could not be processed     (details: failed.tsv)
 #   verbalized.tsv, summary.json, report.html
-# check verify/ + failed/ in the browser (no GPU; Windows or Linux):
-indic-digits verifier
+# then check the uncertain numbers in the browser: indic-verifier (see "Verifier" below)
 indic-digits verbalize --config my.yaml DATA_DIR AUDIO_DIR
 # speed: change batch_size / joint_chunk_frames / encoder_batch_s / group_audio_s one at a time,
 # run compare for each, report time / peak GPU memory / changed picks -> outputs/sweep/<dir>/sweep.html
@@ -123,6 +122,26 @@ indic-digits text "ഫീസ് 1,75,000 ആണ്" --candidates
 
 `DATA_DIR` holds one JSON per recording (`sentences` with `text`/`start_time`/`end_time`, and
 `words` with timestamps, like eval_frozen); `AUDIO_DIR` holds `<same name>.wav`.
+
+### Verifier
+
+A local browser app (`indic_normalizer.verifier`, standard library only: no GPU, torch or numpy;
+Windows or Linux) for a verbalize run dir:
+
+```bash
+indic-verifier OUT_DIR/<data dir> --audio-dir AUDIO_DIR --data-dir DATA_DIR   # = indic-digits verifier
+```
+
+- **Numbers**: check the ones verbalize was unsure about (verify/, reverify/, failed/) one at a
+  time with audio, then save; change numbers already decided, also in finished files
+  (file list: *verbalized (auto)* / *verified*). Changing a decided number rebuilds the file from
+  the original input, so `--data-dir` (or the page's Input folder) must point at it.
+- **Sentences** (✎ Sentences tab): fix the text of any sentence of the file. Saved at once and
+  logged in `sentence_edits.tsv`; the sentence's words are re-split with timings spread over its
+  span (approximate). Hand edits are re-applied whenever the file is rebuilt (a decided number
+  changed, `reverify`), and `reverify` leaves the numbers of hand-edited sentences alone.
+- Logs for study: `verifier_decisions.tsv` (every reading saved), `typed_readings.tsv`
+  (readings typed by hand), `sentence_edits.tsv`.
 
 ## Language auto-detection?
 

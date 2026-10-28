@@ -39,11 +39,30 @@ def read_tsv(path: str) -> List[Dict[str, str]]:
 
 
 def _clean(v) -> str:
+    if v.__class__ is str:                   # the common case (rows read back from a TSV): fast path
+        if "\t" in v or "\n" in v or "\r" in v:
+            return v.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+        return v
     if v is None:
         return ""
     if isinstance(v, bool):
         return "true" if v else "false"
     return str(v).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+
+def append_tsv(path: str, cols: List[str], rows: Iterable[dict]) -> None:
+    """Append rows (header first when the file is new) in ONE write — no rewrite of the rows
+    already there."""
+    import io
+    new_file = not os.path.exists(path) or os.path.getsize(path) == 0
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter="\t", lineterminator="\n")
+    if new_file:
+        w.writerow(cols)
+    for r in rows:
+        w.writerow([_clean(r.get(c)) for c in cols])
+    with open(path, "a", encoding="utf-8-sig" if new_file else "utf-8", newline="") as f:
+        f.write(buf.getvalue())
 
 
 def write_tsv(path: str, cols: List[str], rows: Iterable[dict]) -> None:
