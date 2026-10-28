@@ -37,6 +37,7 @@ digits = [
 
 [project.scripts]
 indic-digits = "indic_normalizer.digits.cli:main"
+indic-verifier = "indic_normalizer.verifier.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/paulsam1016/indic-normalizer"

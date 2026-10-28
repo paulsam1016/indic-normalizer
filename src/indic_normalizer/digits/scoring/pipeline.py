@@ -46,8 +46,10 @@ from .verbalize_report import report_rows
 from .audio import find_audio, load_wav, slice_audio
 from .config import ScoringConfig
 from .. import ml
+from ..detect import to_ascii_digits
 from ..latin import is_english as _is_english, sentence_is_english as _sent_english
 from .. import next_word as _next_word
+from .. import alone as _alone
 
 
 def _doc_text(doc) -> str:
@@ -211,7 +213,8 @@ def plan_document(doc: dict, audio, cfg: ScoringConfig, units=("segment",)) -> L
         swords = [w for w in _words_in(doc, s) if _timed(w)] if ("word" in units or "window" in units) else []
         wmap = _word_map(swords, spans) if swords else None
         for j, sp in enumerate(spans):
-            cands = _candidates(sp, style=cfg.style, latin=eng, next_word=_next_word(text_train, sp))[:cfg.max_candidates]
+            cands = _candidates(sp, style=cfg.style, latin=eng, next_word=_next_word(text_train, sp),
+                                alone=_alone(text_train))[:cfg.max_candidates]
             n = Number(k, sp, cands, default_text)
             n.text_issue = currency_issue(sp) or context_issue(text_train, sp) or lang_issue
             if "segment" in units:
@@ -324,8 +327,9 @@ def decide(n: Number, unit: str, head: str, cfg: ScoringConfig, scorer=None) -> 
     The result is cached on the number (decide runs for the text, the TSV rows, the verify copy
     and the report): every caller sees the same decision, computed once. NaN scores count as
     the worst possible (inf), so they never win and never reach the JSON/HTML outputs."""
+    costs = form_costs_of(cfg)
     key = (unit, head, tuple(n.scores[(unit, head)]), cfg.margin_threshold, getattr(cfg, "style_margin", 0.0),
-           cfg.style, cfg.length_norm)
+           cfg.style, cfg.length_norm, tuple(sorted(costs.items())))
     cache = n.__dict__.setdefault("_decisions", {})
     if key in cache:
         return cache[key]
@@ -333,6 +337,9 @@ def decide(n: Number, unit: str, head: str, cfg: ScoringConfig, scorer=None) -> 
     metric = list(nll)
     if cfg.length_norm and scorer is not None and hasattr(scorer, "n_tokens"):
         metric = [v / scorer.n_tokens(t) for v, (_, t) in zip(nll, n.jobs[unit])]
+    audio = metric                                # the audio alone (suffix_gap measures this)
+    if costs:                                     # readings the audio over-picks (form_costs)
+        metric = [v + form_cost(n, c, costs) for v, c in zip(metric, n.cands)]
     order = sorted(range(len(metric)), key=lambda i: metric[i])
     best = order[0]
     margin = (metric[order[1]] - metric[best]) if len(order) > 1 else float("inf")
@@ -351,7 +358,7 @@ def decide(n: Number, unit: str, head: str, cfg: ScoringConfig, scorer=None) -> 
                 chosen, fallback = dflt, True
     issue = _suffix_issue(n, n.cands[best])
     text_issue = getattr(n, "text_issue", None)
-    sg = suffix_gap(n, metric)
+    sg = suffix_gap(n, audio)
     cache[key] = out = {"best": chosen, "model_best": best, "margin": margin, "review_margin": review_margin,
             "style_gap": style_gap, "style_fallback": fallback, "suffix_issue": issue, "text_issue": text_issue,
             "suffix_gap": sg[0] if sg else None, "suffix_bare": sg[1] if sg else None,
@@ -359,6 +366,33 @@ def decide(n: Number, unit: str, head: str, cfg: ScoringConfig, scorer=None) -> 
             "needs_review": not (review_margin >= cfg.margin_threshold) or issue is not None or text_issue is not None,
             "nll": nll, "metric": metric}
     return out
+
+
+def form_costs_of(cfg) -> dict:
+    from .config import DEFAULT_FORM_COSTS
+    c = getattr(cfg, "form_costs", None)
+    return dict(DEFAULT_FORM_COSTS) if c is None else {k: float(v) for k, v in c.items() if v}
+
+
+def form_cost(n, cand, costs) -> float:
+    """Extra nats for a reading the audio score over-picks (ScoringConfig.form_costs):
+        nosuffix     the written suffix left out (27-ന് -> ഇരുപത്തേഴ്)
+        short_split  digit by digit for a number of up to 3 digits (22 -> രണ്ട് രണ്ട്); codes
+                     with a leading zero (07) and longer numbers are not affected
+        percent      പെർസെന്റ് (55% -> ... പെർസെന്റ്; പെർസെന്റേജ് / ശതമാനം are not)
+        bare_hour    a whole hour without മണി / ഓ ക്ലോക്ക് (11:00 -> പതിനൊന്ന്)"""
+    f, cost = cand.form or "", 0.0
+    if "+" + ml.NOSUFFIX in f:
+        cost += costs.get("nosuffix", 0.0)
+    if f.startswith(("digit_by_digit", "doubled")):
+        d = re.match(r"\d+", to_ascii_digits(getattr(getattr(n, "span", None), "core", "") or ""))
+        if d and len(d.group()) <= 3 and not (len(d.group()) > 1 and d.group()[0] == "0"):
+            cost += costs.get("short_split", 0.0)
+    if f.endswith("+percent"):
+        cost += costs.get("percent", 0.0)
+    if f == "bare":
+        cost += costs.get("bare_hour", 0.0)
+    return cost
 
 
 def suffix_gap(n, metric):
@@ -579,7 +613,7 @@ def plan_text(doc: dict, cfg: ScoringConfig) -> List[dict]:
         plan = {"idx": k, "sentence": s, "text_train": text_train, "numbers": [], "clip": None, "latin": eng}
         default_text = _verbalize(text_train, style=cfg.style, latin=eng) if spans else text_train
         for sp in spans:
-            n = Number(k, sp, _candidates(sp, style=cfg.style, latin=eng,
+            n = Number(k, sp, _candidates(sp, style=cfg.style, latin=eng, alone=_alone(text_train),
                                           next_word=_next_word(text_train, sp))[:cfg.max_candidates], default_text)
             n.text_issue = currency_issue(sp) or context_issue(text_train, sp) or lang_issue
             plan["numbers"].append(n)
@@ -743,6 +777,8 @@ def verbalize_dir(data_dir: str, audio_dir: str, scorer, cfg: ScoringConfig, lim
     srcs = srcs[:limit]
     for st in STATUSES:
         os.makedirs(os.path.join(rd, st), exist_ok=True)
+    from .details import read_tsv as _read_tsv
+    hand_edited = {r.get("file") for r in _read_tsv(os.path.join(rd, "sentence_edits.tsv"))}
     import shutil
     import time
     tot = {"files": len(srcs), "verbalized": 0, "verify": 0, "failed": 0, "numbers": 0, "needs_review": 0,
@@ -841,6 +877,8 @@ def verbalize_dir(data_dir: str, audio_dir: str, scorer, cfg: ScoringConfig, lim
                          "status": "pending"}]
             group_rows[status].extend(rows)
             msg = rec.get("error") or "; ".join(rec.get("reasons", [])) or f"{rec.get('n_numbers', 0)} numbers"
+            if stem in hand_edited:
+                msg += " (re-run: its hand-edited sentences in sentence_edits.tsv are not applied)"
             log(f"[{done}/{len(srcs)}] {status:10s} {name}: {msg}")
         merge_details(rd, group_rows, group_files)   # TSVs match the JSON folders after every group
     wall = time.perf_counter() - t_start

@@ -14,7 +14,7 @@ from test_digits_scoring import DOC, FakeScorer, _wav  # noqa: E402
 from indic_normalizer.digits.scoring import load_config  # noqa: E402
 from indic_normalizer.digits.scoring.details import read_tsv  # noqa: E402
 from indic_normalizer.digits.scoring.pipeline import verbalize_dir  # noqa: E402
-from indic_normalizer.digits.verifier import server as V  # noqa: E402
+from indic_normalizer.verifier import server as V  # noqa: E402
 
 
 class Flat(FakeScorer):
@@ -105,7 +105,7 @@ def test_verifier_http_and_audio_range(run):
     t.start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
     try:
-        assert b"Digits verifier" in urllib.request.urlopen(base + "/").read()
+        assert b"<h1>Verifier</h1>" in urllib.request.urlopen(base + "/").read()
         req = urllib.request.Request(base + "/api/open", json.dumps({"run_dir": str(rd), "audio_dir": str(audio)}).encode(),
                                      {"Content-Type": "application/json"})
         assert json.load(urllib.request.urlopen(req))["loaded"]
@@ -128,7 +128,7 @@ def test_verifier_http_and_audio_range(run):
 
 
 def test_verifier_imports_without_numpy_or_torch():
-    code = ("import sys; import indic_normalizer.digits.verifier.server; "
+    code = ("import sys; import indic_normalizer.verifier.server; "
             "print(sorted(m for m in ('numpy','torch','soundfile','yaml') if m in sys.modules))")
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path))
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True).stdout
@@ -422,3 +422,106 @@ def test_edit_finished_file(run, tmp_path):
     assert not d["can_edit_decided"]
     with pytest.raises(ValueError, match="original input"):
         V.api_save(st, {"file": "a", "kind": "verbalized", "rev": d["rev"], "edits": {i4: "നാല്"}})
+
+
+def test_old_import_path_and_command_still_work():
+    import indic_normalizer.digits.verifier.server as old
+    from indic_normalizer.verifier.cli import main
+    assert old is V
+    with pytest.raises(SystemExit):
+        main(["--help"])
+
+
+def _sent(d, k):
+    return next(s for s in d["all_sentences"] if s["idx"] == k)
+
+
+def test_edit_sentences(run):
+    from indic_normalizer.verifier.sentences import edits_for
+    rd, audio = run
+    st = {}
+    V.api_open(st, {"run_dir": str(rd), "audio_dir": str(audio)})
+    d = V.api_file(st, "a", "verify")
+    assert d["can_edit_sentences"] and [s["idx"] for s in d["all_sentences"]] == [0, 1, 2]
+    assert _sent(d, 0)["locked"] and _sent(d, 1)["locked"] and not _sent(d, 2)["locked"]
+    with pytest.raises(ValueError, match="open numbers"):
+        V.api_sentence(st, {"file": "a", "kind": "verify", "rev": d["rev"], "sentence": 0, "text": "ഫീസ് ആണ്"})
+    with pytest.raises(ValueError, match="digits"):
+        V.api_sentence(st, {"file": "a", "kind": "verify", "rev": d["rev"], "sentence": 2, "text": "ഓക്കേ 5"})
+    with pytest.raises(ValueError, match="failed file"):
+        V.api_sentence(st, {"file": "b", "kind": "failed", "sentence": 2, "text": "ഓക്കേ"})
+
+    # sentence 2 (no numbers, no words in the word list): saved at once, normalized, words added
+    r = V.api_sentence(st, {"file": "a", "kind": "verify", "rev": d["rev"], "sentence": 2, "text": " ഓക്കേ,  താങ്ക്സ്! "})
+    assert r["text"] == "ഓക്കേ താങ്ക്സ്" and r["before"] == "ഓക്കേ" and r["rev"] != d["rev"]
+    with pytest.raises(V.Conflict):                    # the page's old rev is stale now
+        V.api_sentence(st, {"file": "a", "kind": "verify", "rev": d["rev"], "sentence": 2, "text": "ശരി"})
+    with pytest.raises(ValueError, match="nothing changed"):
+        V.api_sentence(st, {"file": "a", "kind": "verify", "rev": r["rev"], "sentence": 2, "text": "ഓക്കേ താങ്ക്സ്"})
+    doc = json.load(open(rd / "verify" / "a.json", encoding="utf-8"))
+    assert doc["sentences"][2]["text"] == "ഓക്കേ താങ്ക്സ്" and doc["transcription"].endswith("ഓക്കേ താങ്ക്സ്")
+    new = [w for w in doc["words"] if w.get("edited")]
+    assert [w["word"] for w in new] == ["ഓക്കേ", "താങ്ക്സ്"] and new[0]["start_time"] == 3.2 and new[-1]["end_time"] == 3.5
+    assert doc["words"][-2:] == new                         # placed by time, after the earlier words
+    assert edits_for(str(rd), "a")[2]["after"] == "ഓക്കേ താങ്ക്സ്"
+    d = V.api_file(st, "a", "verify")                       # numbers unaffected
+    assert [n["core"] for x in d["sentences"] for n in x["numbers"]] == ["25", "4"]
+    assert _sent(d, 2)["edited"] and _sent(d, 2)["original"] == "ഓക്കേ"
+
+    # decide 25; then sentence 0 can be edited (its words re-split over the sentence's word span)
+    i25, i4 = [n["id"] for x in d["sentences"] for n in x["numbers"]]
+    V.api_save(st, {"file": "a", "kind": "verify", "rev": d["rev"], "picks": {i25: "ഇരുപത്തഞ്ച്", i4: None}})
+    d = V.api_file(st, "a", "verify")
+    assert not _sent(d, 0)["locked"] and _sent(d, 2)["text"] == "ഓക്കേ താങ്ക്സ്"   # the number save kept the edit
+    r = V.api_sentence(st, {"file": "a", "kind": "verify", "rev": d["rev"], "sentence": 0,
+                            "text": "ഫീസ് ഇരുപത്തഞ്ച് രൂപ ആണ്"})
+    doc = json.load(open(rd / "verify" / "a.json", encoding="utf-8"))
+    w0 = [w for w in doc["words"] if w["end_time"] <= 1.3]
+    assert [w["word"] for w in w0] == ["ഫീസ്", "ഇരുപത്തഞ്ച്", "രൂപ", "ആണ്"]
+    assert w0[0]["start_time"] == 0.0 and w0[-1]["end_time"] == 1.3 and all(w["edited"] for w in w0)
+    d = V.api_file(st, "a", "verify")
+    dec = {x["id"]: x for x in d["decided"]}
+    assert dec[i25]["sentence_edited"]
+    with pytest.raises(ValueError, match="edited by hand"):  # its number is changed in the sentence text
+        V.api_save(st, {"file": "a", "kind": "verify", "rev": d["rev"], "picks": {i4: "നാല്"},
+                        "edits": {i25: "ട്വന്റി ഫൈവ്"}})
+
+    # finish the file: the rebuild from the original keeps both hand edits
+    r = V.api_save(st, {"file": "a", "kind": "verify", "rev": d["rev"], "picks": {i4: "നാല്"}})
+    assert r["done"]
+    out = json.load(open(rd / "verbalized" / "a.json", encoding="utf-8"))
+    assert [x["text"] for x in out["sentences"]] == ["ഫീസ് ഇരുപത്തഞ്ച് രൂപ ആണ്", "ശരി നാല് പേര്", "ഓക്കേ താങ്ക്സ്"]
+
+    # finished file: change the decided 4 (rebuilt from the input) -> the edited sentences stay
+    d = V.api_file(st, "a", "verbalized")
+    pv = V.api_preview(st, {"file": "a", "kind": "verbalized", "edits": {i4: "ഫോർ"}})["preview"]
+    assert pv[0] == "ഫീസ് ഇരുപത്തഞ്ച് രൂപ ആണ്" and pv[1] == "ശരി ഫോർ പേര്"
+    V.api_save(st, {"file": "a", "kind": "verbalized", "rev": d["rev"], "edits": {i4: "ഫോർ"}})
+    out = json.load(open(rd / "verbalized" / "a.json", encoding="utf-8"))
+    assert [x["text"] for x in out["sentences"]] == ["ഫീസ് ഇരുപത്തഞ്ച് രൂപ ആണ്", "ശരി ഫോർ പേര്", "ഓക്കേ താങ്ക്സ്"]
+    assert "ഫോർ" in [w["word"] for w in out["words"]] and "താങ്ക്സ്" in [w["word"] for w in out["words"]]
+    # and edit a finished file's sentence directly
+    d = V.api_file(st, "a", "verbalized")
+    V.api_sentence(st, {"file": "a", "kind": "verbalized", "rev": d["rev"], "sentence": 1, "text": "ശരി ഫോർ ആള്"})
+    out = json.load(open(rd / "verbalized" / "a.json", encoding="utf-8"))
+    assert out["sentences"][1]["text"] == "ശരി ഫോർ ആള്"
+    log = read_tsv(str(rd / "sentence_edits.tsv"))
+    assert [(x["sentence"], x["kind"], x["after"]) for x in log] == [
+        ("2", "verify", "ഓക്കേ താങ്ക്സ്"), ("0", "verify", "ഫീസ് ഇരുപത്തഞ്ച് രൂപ ആണ്"), ("1", "verbalized", "ശരി ഫോർ ആള്")]
+
+
+def test_fast_tsv_write_matches_write_tsv(tmp_path):
+    from indic_normalizer.digits.scoring.details import NUMBER_COLS, write_tsv
+    rows = [{"file": "a", "sentence": 0, "number": '5"', "candidates": "x\ty", "sentence_text": "a\nb", "status": None,
+             "needs_review": True, "margin": 1.5},
+            {"file": "b", "sentence": "1", "number": "ഇരുപത്", "final_pick": "", "candidates": "p | q"}]
+    a, b = str(tmp_path / "a.tsv"), str(tmp_path / "b.tsv")
+    write_tsv(a, NUMBER_COLS, rows)
+    V._write_rows(b, NUMBER_COLS, rows)
+    assert open(a, "rb").read() == open(b, "rb").read()
+    assert V._rows(b) == read_tsv(b)                       # the cache holds what a fresh read gives
+    again = V._rows(b, copy=False)                          # cached rows written back unchanged
+    V._write_rows(a, NUMBER_COLS, list(again))
+    assert open(a, "rb").read() == open(b, "rb").read()
+    V._append_rows(b, NUMBER_COLS, [{"file": "c", "sentence": 2}])
+    assert V._rows(b) == read_tsv(b) and [r["file"] for r in read_tsv(b)] == ["a", "b", "c"]

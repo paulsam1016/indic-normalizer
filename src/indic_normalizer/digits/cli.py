@@ -7,8 +7,8 @@
                            [--out-root outputs] [--limit N]
     indic-digits sweep     --config cfg.yaml [--sweep-config sweep.yaml] DATA_DIR AUDIO_DIR [--limit N]
                            [--batch-size-values 8,16,32,64] [--greedy] [--out-root outputs/sweep]
-    indic-digits verifier  [RUN_DIR] [--audio-dir DIR]                # check verify/ + failed/ in the browser
-    indic-digits reverify  --config cfg.yaml RUN_DIR AUDIO_DIR [--data-dir DIR] [--files a,b] [--dry-run]
+    indic-digits verifier  [RUN_DIR] [--audio-dir DIR]                # = indic-verifier (the browser verifier)
+    indic-digits reverify  --config cfg.yaml RUN_DIR AUDIO_DIR [--data-dir DIR] [--files a,b] [--dry-run] [--skip-verified] [--resume | --retry-failed]
                            # re-score verbalized/ files; doubtful ones go to reverify/
     indic-digits check     --config cfg.yaml DATA_DIR AUDIO_DIR   # model sanity check, run first
     indic-digits status    RUN_DIR [--data-dir DIR]                # complete? missing / open / digits left
@@ -102,12 +102,10 @@ def main(argv=None):
                    help="replace a config value only if at least this much faster (default 0.03 = 3%%)")
     w.add_argument("--warmup-files", type=int, help="untimed warm-up run on N files (default 2; 0 = none)")
 
-    r = sub.add_parser("verifier", help="check verify/ + failed/ files of a verbalize run in the browser "
-                                        "(no GPU; Windows / Linux)")
-    r.add_argument("run_dir", nargs="?", help="OUT_DIR/<data dir> of a verbalize run (or choose it in the page)")
-    r.add_argument("--audio-dir", help="folder with <stem>.wav (or choose it in the page)")
-    r.add_argument("--port", type=int, default=8765)
-    r.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
+    from ..verifier.cli import add_arguments as _verifier_args
+    r = sub.add_parser("verifier", help="same as indic-verifier: check numbers / fix sentences of a run in "
+                                        "the browser (no GPU; Windows / Linux)")
+    _verifier_args(r)
 
     k = sub.add_parser("check", help="sanity-check the model scorer on a few sentences")
     _scoring_args(k)
@@ -125,6 +123,13 @@ def main(argv=None):
     r.add_argument("--data-dir", help="original input dir (default: <run>/input/, then summary.json data_dir)")
     r.add_argument("--files", help="comma-separated stems to check (default: all of verbalized/)")
     r.add_argument("--dry-run", action="store_true", help="only write reverify_report.tsv / .json, move nothing")
+    r.add_argument("--skip-verified", action="store_true",
+                   help="re-check only numbers decided automatically; never reopen readings verified by hand")
+    r.add_argument("--resume", action="store_true",
+                   help="continue an interrupted reverify: skip files this session already checked "
+                        "(reports still cover the whole session)")
+    r.add_argument("--retry-failed", action="store_true",
+                   help="like --resume, but files that failed (scoring error, missing audio) are checked again")
     r.add_argument("--no-refresh", action="store_true",
                    help="don't re-score the open numbers of files waiting in verify/ and reverify/")
     stt = sub.add_parser("status", help="is a run complete? every input verbalized, nothing open (no GPU)")
@@ -152,11 +157,18 @@ def main(argv=None):
             sys.exit(f"{a.run_dir}: no verbalized.tsv (give OUT_DIR/<data dir> of a verbalize run)")
         tot = reverify(a.run_dir, a.audio_dir, _scorer(cfg), cfg, data_dir=a.data_dir,
                        files=[s.strip() for s in a.files.split(",")] if a.files else None,
-                       limit=a.limit, dry_run=a.dry_run, refresh=not a.no_refresh)
+                       limit=a.limit, dry_run=a.dry_run, refresh=not a.no_refresh,
+                       resume=a.resume, retry_failed=a.retry_failed, skip_verified=a.skip_verified)
         print(json.dumps(tot, ensure_ascii=False, indent=2))
         print(f"checked {tot['files_checked']} files / {tot['numbers_checked']} numbers: {tot['numbers_flagged']} "
               f"flagged ({tot['flagged_auto']} auto, {tot['flagged_verified']} verified) in {tot['files_flagged']} "
               f"files" + (" (dry run)" if a.dry_run else " -> reverify/") + f"; report {a.run_dir}/reverify_report.tsv")
+        if tot.get("resumed_skipped"):
+            print(f"resumed: {tot['resumed_skipped']} file(s) checked earlier in this session were skipped; "
+                  f"totals cover the whole session")
+        if tot["skipped_error"]:
+            print(f"{tot['skipped_error']} file(s) failed (see failed_files in reverify_report.json): "
+                  f"run again with --retry-failed")
         w = tot.get("waiting")
         if w:
             print(f"waiting files (verify/ + reverify/): {w['files']} re-scored, {w['numbers_refreshed']} open "
@@ -209,8 +221,8 @@ def main(argv=None):
         print(json.dumps({"best": res["best_settings"], "speedup": res["speedup_final"]}, indent=2))
         print(f"wrote {out}/sweep.html, best_config.yaml")
     elif a.cmd == "verifier":
-        from .verifier.server import serve
-        serve(a.run_dir, a.audio_dir, a.port, open_browser=not a.no_browser)
+        from ..verifier.cli import run as _verifier
+        return _verifier(a)
     elif a.cmd == "check":
         return _check(a)
     elif a.cmd == "text":

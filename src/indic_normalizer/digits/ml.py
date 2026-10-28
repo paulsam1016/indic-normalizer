@@ -165,18 +165,37 @@ def attach(word: str, suffix: str) -> str:
     pre = head + " " if head else ""
     if suffix[0] == "യ" and len(suffix) > 1 and suffix[1] in SIGNS:   # glide written out
         suffix = suffix[1:]
+    if not last.endswith("ം"):
+        # the -ത്ത- / -വ- of a suffix written for a ം-word (ആയിരത്തോളം, ആയിരവും) belongs to
+        # that word: drop it for other endings (അമ്പതോളം, തൗസന്റിലധികം, തൗസന്റും)
+        if suffix.startswith("ത്ത") and len(suffix) > 3 and suffix[3] in SIGNS:
+            suffix = suffix[3:]
+        elif suffix[0] == "വ" and len(suffix) > 1 and suffix[1] in SIGNS:
+            suffix = suffix[1:]
+    a_vowel = suffix[0] == "അ"                     # അല്ലേ: inherent -a, joins like a vowel sign
     if suffix[0] in V_SIGN:                                              # independent vowel
         suffix = V_SIGN[suffix[0]] + suffix[1:]
         if not suffix:
             return word
-    vowel_suffix = suffix[0] in SIGNS
+    vowel_suffix = suffix[0] in SIGNS or a_vowel
     if last.endswith(VIRAMA):                       # നാല് / ഫൈവ്
         stem = last[:-1]
         if suffix.startswith("ക്ക"):                 # dative: അമ്പത് + ക്ക് -> അമ്പതിന്
             return pre + stem + "ിന" + suffix[3:]
         return pre + stem + (suffix if vowel_suffix else "ി" + suffix)
     if last.endswith("ം"):                          # ആയിരം / ലക്ഷം / പതിനഞ്ചാം
-        if vowel_suffix:
+        if suffix.startswith("ത്ത") and not last.endswith("ാം"):
+            return pre + last[:-1] + suffix          # suffix already has the -ത്ത-: ആയിരം + ത്തോളം -> ആയിരത്തോളം
+        if suffix.startswith("വ") and not last.endswith("ാം"):
+            return pre + last[:-1] + suffix          # ആയിരം + വും -> ആയിരവും
+        if vowel_suffix and not last.endswith("ാം"):
+            if suffix[0] == "ി":                     # ലക്ഷം + ിൽ -> ലക്ഷത്തിൽ (not ലക്ഷമിൽ)
+                return pre + last[:-1] + "ത്ത" + suffix
+            if suffix == "ും":                       # ആയിരം + ഉം -> ആയിരവും
+                return pre + last[:-1] + "വ" + suffix
+            if suffix.startswith("ുടെ"):              # ലക്ഷം + ഉടെ -> ലക്ഷത്തിന്റെ
+                return pre + last[:-1] + "ത്തിന്റെ" + suffix[3:]
+        if vowel_suffix:                             # ആയിരമോ, ആയിരമാണ്, പതിനഞ്ചാമോ
             return pre + last[:-1] + "മ" + suffix
         if last.endswith("ാം"):                     # ordinal: പന്ത്രണ്ടാം -> പന്ത്രണ്ടാമത്തി...
             return pre + last[:-1] + "മത്തി" + suffix
@@ -186,6 +205,16 @@ def attach(word: str, suffix: str) -> str:
         if suffix.startswith("ക്ക"):
             return pre + stem + "ിന" + suffix[3:]
         return pre + stem + (suffix if vowel_suffix else "ി" + suffix)
+    if last[-1] in ("ു", "ൂ"):                     # ടു: the glide is വ (ടുവിൽ, ടുവിന്, ടുവും)
+        if vowel_suffix:
+            return pre + last + "വ" + suffix
+        if suffix.startswith("ന്റെ"):
+            return pre + last + "വിന്റെ" + suffix[4:]
+        if suffix[0] == "ന" and len(suffix) > 1 and (suffix[1] in SIGNS or suffix[1] == VIRAMA):
+            return pre + last + "വി" + suffix        # dative: ടു + ന് -> ടുവിന്
+        if suffix.startswith("ക്ക"):
+            return pre + last + "വിന" + suffix[3:]   # ടു + ക്ക് -> ടുവിന്
+        return pre + last + "വി" + suffix            # ടു + ൽ -> ടുവിൽ
     if last[-1] in SIGNS:                           # ട്വന്റി / ത്രീ
         if vowel_suffix:
             return pre + last + "യ" + suffix        # ട്വന്റി + ിൽ -> ട്വന്റിയിൽ
@@ -328,6 +357,26 @@ def lakh_drop_thousand(n: int, style: str = "contracted") -> Optional[str]:
     return f"{count} {LAKH_C} {_below100(r // 1000, style)}"
 
 
+def en_lakh_drop_thousand(n: int) -> Optional[str]:
+    """English form of lakh_drop_thousand: 355000 -> ത്രീ ലാക് ഫിഫ്റ്റി ഫൈവ് (with a suffix:
+    ...ഫൈവിന്)."""
+    if not (100_000 <= n < 10_000_000):
+        return None
+    lk, r = divmod(n, 100_000)
+    if r == 0 or r % 1000:
+        return None
+    return f"{en_words(lk)} {EN_LAKH} {en_words(r // 1000)}"
+
+
+def one_hundred(n: int) -> Optional[str]:
+    """Thousands + 100-199 with the "one" said: 2100 -> രണ്ടായിരത്തി ഒരു നൂറ്, 2150 ->
+    രണ്ടായിരത്തി ഒരു നൂറ്റി അമ്പത് (from the spaced reading)."""
+    if not (1000 < n < 100_000) or (n % 1000) // 100 != 1:
+        return None
+    w = words(n, "spaced")
+    return w.replace(" നൂറ", " ഒരു നൂറ", 1) if " നൂറ" in w else None
+
+
 def en_drop_thousands(n: int) -> Optional[str]:
     """English form of drop_thousands: 38500 -> തേർട്ടി എയ്റ്റ് ഫൈവ് ഹൺഡ്രഡ്."""
     if not (2000 <= n < 100_000):
@@ -345,13 +394,16 @@ def en_drop_thousands(n: int) -> Optional[str]:
 # variants (നാല്പത്, എമ്പത്, ഇരുന്നൂറ്) are not added: the spelling policy decides those.
 # All substitutions applied together give one "<form>_alt" candidate per native form, in the same
 # reading family as that form (never a review reason).
-ALT_SUBS = [("ണ്ണായിര", "ട്ടായിര"), ("യ്യായിര", "ഞ്ചായിര")]
+ALT_SUBS = [("ണ്ണായിര", "ട്ടായിര"), ("യ്യായിര", "ഞ്ചായിര"),
+            # 10,000 as പത്തായിരം (1,10,000 -> ഒരു ലക്ഷത്തി പത്തായിരം); only as a whole word, so
+            # ഇരുപതിനായിരം / അമ്പതിനായിരം are left alone
+            (r"(?<![\u0d00-\u0d7f])പതിനായിര", "പത്തായിര")]
 ALT_FORMS = ("contracted", "glide", "spaced", "drop_thousand", "drop_thousand_spaced")
 
 
 def alt_spelling(text: str) -> str:
     for a, b in ALT_SUBS:
-        text = text.replace(a, b)
+        text = re.sub(a, b, text) if a.startswith("(?") else text.replace(a, b)
     return text
 
 
@@ -399,6 +451,15 @@ def _num(n: int, style: str) -> List[Candidate]:
     d = lakh_drop_thousand(n, style)
     if d:
         out.append(Candidate(d, "ml", "drop_thousand"))               # മൂന്ന് ലക്ഷത്തി ഇരുപത്തഞ്ച്
+        out.append(Candidate(en_lakh_drop_thousand(n), "en", "lakh_drop_thousand"))   # ത്രീ ലാക് ഫിഫ്റ്റി ഫൈവ്
+    d = one_hundred(n)
+    if d:
+        out.append(Candidate(d, "ml", "one_hundred"))                 # രണ്ടായിരത്തി ഒരു നൂറ്
+    if 150_000 <= n < 10_000_000 and n % 100_000 == 50_000:          # 250000 -> രണ്ടര ലക്ഷം
+        out.append(Candidate(f"{half(n // 100_000, style)} {LAKH}", "ml", "lakh_half"))
+    if n in (1000, 10_000):          # "one lakh" written with zeros dropped (1000 / 10000 for 1,00,000)
+        out += [Candidate(f"{EN_ONES[1]} {EN_LAKH}", "en", "lakh_zeros_dropped"),
+                Candidate(f"ഒരു {LAKH}", "ml", "lakh_zeros_dropped")]
     e = en_drop_thousands(n)
     if e:
         out.append(Candidate(e, "en", "drop_thousand"))
@@ -440,7 +501,8 @@ def _int_or_ids(s: str, style: str) -> List[Candidate]:
     if len(s) >= 2 and len(set(s)) == 1:      # 55 -> ഡബിൾ ഫൈവ്, 999 -> ട്രിപ്പിൾ നൈൻ
         k = next((i for i, c in enumerate(out) if c.form.endswith("_alt")), len(out))
         out[k:k] = _doubled(s)
-    if len(s) >= SPLIT_MIN_DIGITS and not re.fullmatch(r"[1-9]0+", s):   # not 10 / 100 / 1000
+    if len(s) >= SPLIT_MIN_DIGITS and (len(s) == 2 or not re.fullmatch(r"[1-9]0+", s)):
+        # round 2-digit numbers too (30 -> ത്രീ സീറോ); not 100 / 1000
         # split digit by digit too (730 -> ഏഴ് മൂന്ന് പൂജ്യം / സെവൻ ത്രീ സീറോ: codes, room / bus /
         # flight numbers), placed before the colloquial _alt spellings so max_candidates keeps them
         k = next((i for i, c in enumerate(out) if c.form.endswith("_alt")), len(out))
@@ -578,12 +640,33 @@ WORD_STEMS = ("മണി", "ലക്ഷ", "കോടി", "രൂപ", "കി�
               # English words written after a number (3-ഇയർ, 4-സ്റ്റാർ, 1-ഓൺ-1, 3-സ്റ്റെയർ)
               "ഇയർ", "ഇയറ", "സ്റ്റാർ", "സ്റ്റെയർ", "ഷെയർ", "ഓൺ", "ഡേ", "നൈറ്റ്", "റൂം", "പ്ലസ്",
               "കെ", "ലാക്", "ക്രോർ", "അവർ", "വീക്ക്", "മന്ത്", "പേഴ്സൺ", "ടൈം", "സീറ്റ്",
-              "ബെഡ്", "പീസ്", "സെറ്റ്", "ജിബി", "എംബി", "ഇഞ്ച്", "ഫീറ്റ്", "ഡോസ്", "ബിഎച്ച്കെ")
+              "ബെഡ്", "പീസ്", "സെറ്റ്", "ജിബി", "എംബി", "ഇഞ്ച്", "ഫീറ്റ്", "ഡോസ്", "ബിഎച്ച്കെ",
+              "ഇയേഴ", "ഇയറ", "ഹവർ", "ഹവറ", "അവറ", "ആൻഡ്", "ഡെയ്", "ഡേയ്", "മന്ത", "വീക്ക")
+# short English words that are separate only when they are the whole suffix (2-വേ -> ടു വേ)
+WORD_EXACT = ("വേ", "വേയ്")
+
+
+_LETTER_NAMES = sorted(set(LETTERS.values()), key=len, reverse=True)
+
+
+def letter_abbreviation(word: str) -> bool:
+    """True for an abbreviation spelled with two or more Malayalam letter names (എംഎൽ, കെജി,
+    ജിബി, എംഎം): a unit word of its own after a number, never a case ending."""
+    i = n = 0
+    while i < len(word):
+        hit = next((x for x in _LETTER_NAMES if word.startswith(x, i)), None)
+        if not hit:
+            return False
+        i += len(hit)
+        n += 1
+    return n >= 2
 
 
 def is_word(suffix: str) -> bool:
-    """True if the Malayalam text after a number is a separate word (see WORD_STEMS)."""
-    return suffix.lstrip("-").startswith(WORD_STEMS)
+    """True if the Malayalam text after a number is a separate word (see WORD_STEMS), or a
+    letter abbreviation (3എംഎൽ -> ത്രീ എംഎൽ, not ത്രീയെംഎൽ)."""
+    suffix = suffix.lstrip("-")
+    return suffix.startswith(WORD_STEMS) or suffix in WORD_EXACT or letter_abbreviation(suffix)
 
 
 # English for a unit word written after a number, when the unit itself may be said in English
@@ -631,10 +714,49 @@ def _num_suffix(s: str, style: str) -> List[Candidate]:
         hour = [Candidate(f"{'ഒരു' if h == 1 else words(h, style)} മണിക്ക്", "ml", "oclock_manikku")]
     bare = [Candidate(c.text, c.lang, f"{c.form}+{NOSUFFIX}") for c in main
             if c.form != "drop_thousand_spaced"]
+    # the -ന്- of a written suffix is often not said: 14-നും -> പതിനാലും, 26-നാണ് -> ഇരുപത്താറാണ് /
+    # ട്വന്റി സിക്സ്ത്താണ്; a date written -ന് is also said -ആം തീയതി contracted: 15-ന് ->
+    # പതിനഞ്ചാന്തി
+    no_n = []
+    rest = without_n(m.group(2))
+    ords = [c for c in main if c.form == "ordinal_th"]
+    if rest:
+        no_n = [Candidate(glue(c.text, rest), c.lang, f"{c.form}+no_n") for c in main[:3] + ords]
+    if m.group(2).lstrip("-") == "ന്റെ":         # genitive written, dative said: 40-ന്റെ -> നാൽപ്പതിന്
+        no_n += [Candidate(glue(c.text, "ന്"), c.lang, f"{c.form}+dative") for c in main[:3]]
+    if m.group(2).lstrip("-") == "ന്" and num.isdigit() and 1 <= int(num) <= DATE_MAX:
+        no_n.append(Candidate(attach(words(int(num), style), "ാന്തി"), "ml", "date_aanthi"))
     # bare main readings (default style, other style, English) before the colloquial spellings
     # so max_candidates never cuts them
     # the default readings, then their bare forms, then the rest — so max_candidates keeps both
-    return glued(main[:3]) + hour + bare[:3] + glued(main[3:]) + glued(alts) + bare[3:]
+    return glued(main[:3]) + hour + bare[:3] + no_n + glued(main[3:]) + glued(alts) + bare[3:]
+
+
+_SIGN_VOWEL = {v: k for k, v in V_SIGN.items() if v}
+
+
+def without_n(suffix: str) -> Optional[str]:
+    """A suffix written as ന് + a particle, with the ന് left out, as an independent vowel for
+    attach(): നും -> ഉം, നാണ് -> ആണ്, നോ -> ഓ, നല്ലേ -> അല്ലേ. None for other suffixes (ന് / ന്റെ /
+    നുള്ള ... keep their ന്)."""
+    s = suffix.lstrip("-")
+    if len(s) < 2 or s[0] != "ന":
+        return None
+    if s[1] in ("ു", "ാ", "ോ", "േ", "െ") and not s.startswith(("നുള്ള", "നു ")):
+        return _SIGN_VOWEL[s[1]] + s[2:]
+    if s.startswith("നല്ല"):
+        return "അ" + s[1:]
+    return None
+
+
+def lone_e(cands: List[Candidate]) -> List[Candidate]:
+    """For a number that is the whole sentence ("89."), the reading with a trailing -ഏ, as numbers
+    read out are said (എൺപത്തൊമ്പതേ, പൂജ്യം ഏഴേ): native readings ending in ് only."""
+    out = []
+    for c in cands:
+        if c.lang == "ml" and c.form in ("contracted", "glide", "digit_by_digit") and c.text.endswith(VIRAMA):
+            out.append(Candidate(c.text[:-1] + "േ", "ml", c.form + "+e"))
+    return out
 
 
 def suffix_issue(core: str) -> Optional[str]:
@@ -663,8 +785,10 @@ SUPERSCRIPT = {"²": "സ്ക്വയർ", "³": "ക്യൂബ്"}       
 
 
 def _letters(run: str) -> str:
+    """Short Latin acronyms in Malayalam letter names, written joined as the transcripts write
+    abbreviations (ml -> എംഎൽ, like എഐ / കെജി / ജിഎസ്ടി)."""
     if run.isascii() and (len(run) <= 3 or run.isupper()):
-        return " ".join(LETTERS.get(ch.lower(), ch) for ch in run)
+        return "".join(LETTERS.get(ch.lower(), ch) for ch in run)
     return run.lower() if run.isascii() else run
 
 
@@ -758,6 +882,10 @@ def _digits_only(s: str) -> List[Candidate]:
 
 
 LAKH_WORDS = ("ലക്ഷ", "ലാക്", "lakh", "lac")
+# units often said with a fraction (1.5 hours, 2.5 years, 3.5 kg): a 2-3 digit number before them
+# also gets the lost-point readings (after the usual ones)
+POINT_UNITS = ("അവേഴ്സ", "അവർ", "മണിക്കൂ", "ഇയേഴ്സ", "ഇയർ", "വർഷ", "കൊല്ല", "കിലോ", "കെജി",
+               "കിമീ", "കിലോമീ", "ലിറ്റ", "പെർസെ", "ശതമാന", "ജിബി", "മാസ", "മന്ത", "സിജിപിഎ")
 
 
 def missing_point(s: str, style: str) -> List[Candidate]:
@@ -775,13 +903,14 @@ def missing_point(s: str, style: str) -> List[Candidate]:
 
 
 def candidates(core: str, cls: str = None, style: str = "contracted", latin: bool = False,
-               next_word: str = "") -> List[Candidate]:
+               next_word: str = "", alone: bool = False) -> List[Candidate]:
     """All plausible spoken readings of one number token core; the first is the default
     (native words in ``style``). Never contains digits or number punctuation.
     ``latin``: the sentence is written in English -> Latin-script English readings only
     (five, twelve thirty); tokens that can't be read that way (23-ന്) keep the usual ones.
     ``next_word``: the word after the number; before a lakh word (25 ലക്ഷം) the readings with a
-    lost decimal point are added (രണ്ടര, രണ്ട് പോയിന്റ് അഞ്ച്)."""
+    lost decimal point are added (രണ്ടര, രണ്ട് പോയിന്റ് അഞ്ച്).
+    ``alone``: the sentence has no words, only numbers ("89.") -> readings with a trailing -ഏ too."""
     if style not in STYLES:
         raise ValueError(f"style must be one of {STYLES}")
     s = to_ascii_digits(core).strip()
@@ -797,6 +926,10 @@ def candidates(core: str, cls: str = None, style: str = "contracted", latin: boo
         out = _candidates(s, cls, style)
         if cls == "integer" and (next_word or "").lower().startswith(LAKH_WORDS):
             out[3:3] = missing_point(s, style)
+        elif cls == "integer" and (alone or (next_word or "").lower().startswith(POINT_UNITS)):
+            out[4:4] = missing_point(s, style)   # "485." / 15 അവേഴ്സ് said with a point the text lost
+        if alone and cls in ("integer", "id_code"):
+            out[3:3] = lone_e(out)
     except (ValueError, KeyError, AttributeError, StopIteration, IndexError):
         try:
             out = _piecewise(s, style)

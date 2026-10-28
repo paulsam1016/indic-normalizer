@@ -45,7 +45,7 @@ def test_devanagari_is_not_counted_as_english():
 
 
 def test_verifier_candidate_generator_hindi(tmp_path):
-    from indic_normalizer.digits.verifier.server import api_candidates
+    from indic_normalizer.verifier.server import api_candidates
     st = {"run_dir": str(tmp_path)}
     r = api_candidates(st, "428 रुपये")
     assert r["lang"] == "hi" and r["groups"][0]["candidates"][0]["text"] == "फ़ोर हंड्रेड ट्वेंटी एट"

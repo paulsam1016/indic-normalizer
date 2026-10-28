@@ -120,7 +120,7 @@ def _dedupe(cs: List[Candidate]) -> List[Candidate]:
 
 
 def candidates(core: str, cls: str = None, style: str = "contracted", latin: bool = False,
-               next_word: str = "") -> List[Candidate]:
+               next_word: str = "", alone: bool = False) -> List[Candidate]:
     """Devanagari English readings of one number token core. ``style`` / ``next_word`` are
     accepted for the shared interface and not used yet; ``latin`` gives Latin-script English
     (as for ``ml``). Classes not handled yet fall back to digit by digit."""

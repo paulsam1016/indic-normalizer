@@ -82,10 +82,72 @@ def check_number(row, n, d) -> Optional[str]:
     return None
 
 
+SESSION_DIR = "reverify_session"           # <run>/reverify_session/: what this reverify session has done
+PROGRESS_COLS = ["stem", "outcome", "numbers", "flagged", "error", "at"]
+OUTCOMES = ("ok", "flagged", "error", "misaligned", "no_input")
+
+
+def _session_paths(run):
+    d = os.path.join(run, SESSION_DIR)
+    return d, {k: os.path.join(d, f"{k}.tsv") for k in ("progress", "numbers", "report")}, os.path.join(d, "session.json")
+
+
+def _progress(path) -> dict:
+    """stem -> its latest progress row (a stem can appear again after --retry-failed)."""
+    return {r["stem"]: r for r in read_tsv(path)}
+
+
+def _start_session(run, dry_run, resume, log):
+    """Open the session: a new one (files cleared), or the earlier one when resuming."""
+    d, paths, meta_p = _session_paths(run)
+    meta = None
+    if resume and os.path.exists(meta_p):
+        with open(meta_p, encoding="utf-8") as f:
+            meta = json.load(f)
+        if bool(meta.get("dry_run")) != bool(dry_run):
+            raise ValueError("the earlier reverify session was " + ("a dry run" if meta.get("dry_run") else "a real run")
+                             + ": resume it the same way, or start a new session (no --resume / --retry-failed)")
+    elif resume:
+        log("resume: no earlier reverify session in this run dir — checking every file")
+    if meta is None:
+        os.makedirs(d, exist_ok=True)
+        for p in paths.values():
+            if os.path.exists(p):
+                os.remove(p)
+        meta = {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "dry_run": bool(dry_run)}
+        _write_json_atomic(meta_p, meta)
+    return paths, meta
+
+
+def _dedupe_rows(rows):
+    """Rows of a number written twice (a file re-checked after an interruption): the last wins."""
+    out = {}
+    for r in rows:
+        out[(r.get("file"), str(r.get("sentence")), str(r.get("number_index")))] = r
+    return list(out.values())
+
+
+def _as_measure(r):
+    """A numbers.tsv row read back -> the types measure_summary expects."""
+    num = lambda v: float(v) if v not in (None, "", "None") else None
+    return dict(r, agrees=str(r.get("agrees")).lower() == "true", flagged=str(r.get("flagged")).lower() == "true",
+                review_margin=num(r.get("review_margin")), margin=num(r.get("margin")), suffix_gap=num(r.get("suffix_gap")))
+
+
 def reverify(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[str] = None,
              files: Optional[List[str]] = None, limit: Optional[int] = None, dry_run: bool = False,
-             log=print, refresh: bool = True) -> dict:
+             log=print, refresh: bool = True, resume: bool = False, retry_failed: bool = False,
+             skip_verified: bool = False) -> dict:
+    """``resume``: continue the earlier (interrupted) session — files it already handled are
+    skipped; ``retry_failed``: like resume, but files that failed (scoring error, missing audio)
+    are checked again. Either way the reports cover the whole session.
+    ``skip_verified``: re-check only numbers decided automatically; readings a person verified are
+    never reopened (they are still measured in reverify_numbers.tsv)."""
+    from .details import append_tsv
+    from .pipeline import folder_counts
     run = os.path.abspath(run)
+    resume = resume or retry_failed
+    paths, meta = _start_session(run, dry_run, resume, log)
     vpath = tsv_path(run, "verbalized")
     vrows = read_tsv(vpath)
     by_file = {}
@@ -95,19 +157,35 @@ def reverify(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[str] = No
     if files:
         want = set(files)
         stems = [s for s in stems if s in want]
+    prog = _progress(paths["progress"])
+    resumed_skipped = 0
+    if resume and prog:
+        done_before = {s for s, r in prog.items() if not (retry_failed and r["outcome"] == "error")}
+        keep = [s for s in stems if s not in done_before]
+        resumed_skipped = len(stems) - len(keep)
+        retried = sum(1 for s in keep if prog.get(s, {}).get("outcome") == "error")
+        stems = keep
+        log(f"resume: {resumed_skipped} file(s) already checked in this session, {len(stems)} to go"
+            + (f" ({retried} failed one(s) retried)" if retry_failed else ""))
     stems = sorted(stems)[:limit]
     data_dir = data_dir or _summary(run).get("data_dir")
-    srcs, missing = [], []
+
+    def progress(stem, outcome, numbers=0, flagged=0, error=""):
+        append_tsv(paths["progress"], PROGRESS_COLS, [{"stem": stem, "outcome": outcome, "numbers": numbers,
+                                                       "flagged": flagged, "error": error,
+                                                       "at": time.strftime("%Y-%m-%dT%H:%M:%S")}])
+
+    srcs = []
     for s in stems:
         p = _original(run, s, data_dir)
-        (srcs if p else missing).append(p or s)
-    for s in missing:
-        log(f"skip {s}: original input not found (input/ or --data-dir)")
+        if p:
+            srcs.append(p)
+        else:
+            log(f"skip {s}: original input not found (input/ or --data-dir)")
+            progress(s, "no_input")
 
-    tot = {"run_dir": run, "files_checked": 0, "files_flagged": 0, "numbers_checked": 0, "numbers_flagged": 0,
-           "flagged_auto": 0, "flagged_verified": 0, "skipped_no_input": len(missing), "skipped_error": 0,
-           "skipped_misaligned": 0, "dry_run": dry_run}
-    report, moved, measured, typed = [], [], [], []
+    typed_found = typed_added = 0
+    moved_now = []
     done = 0
     t0 = time.perf_counter()
     for items, _ in iter_groups(srcs, audio_dir, cfg, (cfg.unit,)):
@@ -122,25 +200,26 @@ def reverify(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[str] = No
             done += 1
             pre = f"[{done}/{len(srcs)}] {stem}:"     # progress: 687/1155
             if "error" in it:
-                tot["skipped_error"] += 1
                 log(f"{pre} skipped ({it.get('stage', '')} {it['error']})")
+                progress(stem, "error", error=f"{it.get('stage', '')} {it['error']}".strip())
                 continue
             rows = {(int(r["sentence"]), int(r["number_index"])): r for r in by_file[stem]}
             plans = it["plans"]
             nums = [(p, k, n) for p in plans for k, n in enumerate(p["numbers"])]
             if len(nums) != len(rows) or any((p["idx"], k) not in rows or _bc(rows[(p["idx"], k)].get("number")) != _bc(n.span.core)
                                              for p, k, n in nums):
-                tot["skipped_misaligned"] += 1
                 log(f"{pre} skipped (numbers in the input no longer match verbalized.tsv)")
+                progress(stem, "misaligned")
                 continue
-            tot["files_checked"] += 1
             flagged = {}
-            details = []
+            details, measured, report, typed = [], [], [], []
+            from ...verifier.sentences import apply_edits, edits_for
+            hand = edits_for(run, stem)                  # sentences fixed by hand: their numbers stay as they are
             for p, k, n in nums:
                 d = dict(decide(n, cfg.unit, cfg.head, cfg, scorer), threshold=cfg.margin_threshold)
                 r = rows[(p["idx"], k)]
-                why = check_number(r, n, d)
-                tot["numbers_checked"] += 1
+                why = None if p["idx"] in hand or (skip_verified and r.get("status") == "verified") \
+                    else check_number(r, n, d)
                 details.append(_number_details(p, n, d, cfg))
                 measured.append(_measure(stem, p, k, n, r, d, why))
                 tr = _typed_record(stem, p, k, n, r, d)
@@ -148,8 +227,6 @@ def reverify(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[str] = No
                     typed.append(tr)
                 if why:
                     flagged[(p["idx"], k)] = why
-                    tot["numbers_flagged"] += 1
-                    tot["flagged_verified" if r.get("status") == "verified" else "flagged_auto"] += 1
                     texts = [c.text for c in n.cands]
                     prev = r.get("final_pick") or ""
                     gap = (d["metric"][texts.index(prev)] - d["metric"][d["model_best"]]) if prev in texts else None
@@ -159,13 +236,20 @@ def reverify(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[str] = No
                                    "margin": _round(d["margin"]), "review_margin": _round(d["review_margin"]),
                                    "reason": why, "action": "dry-run" if dry_run else "-> reverify",
                                    "sentence_text": p["sentence"].get("text") or ""})
+            # this file's results go into the session first, so an interruption loses nothing
+            append_tsv(paths["numbers"], NUMBER_REPORT_COLS, measured)
+            if report:
+                append_tsv(paths["report"], REPORT_COLS, report)
+            typed_found += len(typed)
+            typed_added += append_typed(run, typed)      # hand-typed readings -> typed_readings.tsv
             if not flagged:
                 log(f"{pre} ok ({len(nums)} numbers)")
+                progress(stem, "ok", len(nums))
                 continue
-            tot["files_flagged"] += 1
             log(f"{pre} {len(flagged)} of {len(nums)} number(s) to check again"
                 + (" (dry run)" if dry_run else " -> reverify/"))
             if dry_run:
+                progress(stem, "flagged", len(nums), len(flagged))
                 continue
             # the verify copy: flagged numbers open (as written), the rest as stored
             keep = {}
@@ -174,6 +258,7 @@ def reverify(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[str] = No
                     keep[p["idx"]] = [n.span.text if (p["idx"], k) in flagged else rows[(p["idx"], k)]["final_pick"]
                                       for k, n in enumerate(p["numbers"])]
             out, _, _ = same_document(it["doc"], plans, cfg, choices=keep)
+            out = apply_edits(run, stem, out)            # hand-edited sentences survive the rebuild
             reason = f"reverify: {len(flagged)} number(s) to check again"
             new_rows = number_rows(stem, plans, details, "verify", [reason])
             for nr in new_rows:
@@ -199,27 +284,42 @@ def reverify(run: str, audio_dir: str, scorer, cfg, data_dir: Optional[str] = No
                 os.remove(os.path.join(run, "verbalized", stem + ".json"))
             except OSError:
                 pass
-            moved.append(stem)
+            moved_now.append(stem)
+            progress(stem, "flagged", len(nums), len(flagged))
 
+    # totals over the WHOLE session (earlier interrupted runs included)
+    prog = _progress(paths["progress"])
+    outcome = lambda o: [s for s, r in prog.items() if r["outcome"] == o]
+    measured_all = [_as_measure(r) for r in _dedupe_rows(read_tsv(paths["numbers"]))]
+    report_all = _dedupe_rows(read_tsv(paths["report"]))
+    flagged_files = outcome("flagged")
+    tot = {"run_dir": run, "session_started": meta.get("started"),
+           "files_checked": len(outcome("ok")) + len(flagged_files), "files_flagged": len(flagged_files),
+           "numbers_checked": len(measured_all), "numbers_flagged": len(report_all),
+           "flagged_auto": sum(1 for r in report_all if r.get("status_before") != "verified"),
+           "flagged_verified": sum(1 for r in report_all if r.get("status_before") == "verified"),
+           "skipped_no_input": len(outcome("no_input")), "skipped_error": len(outcome("error")),
+           "skipped_misaligned": len(outcome("misaligned")), "dry_run": dry_run,
+           "resumed_skipped": resumed_skipped, "skip_verified": skip_verified, "this_run": {"files": done, "moved_to_reverify": len(moved_now)},
+           "failed_files": {s: prog[s].get("error", "") for s in outcome("error")}}
     tot["seconds"] = round(time.perf_counter() - t0, 2)
-    tot["files_moved_to_reverify"] = moved
+    tot["files_moved_to_reverify"] = [] if dry_run else sorted(flagged_files)
     if refresh:                                   # files still waiting in verify/ and reverify/
         tot["waiting"] = refresh_waiting(run, audio_dir, scorer, cfg, data_dir=data_dir, files=files,
-                                         dry_run=dry_run, skip=set(moved), log=log)
-    tot["measure"] = measure_summary(measured)
-    tot["typed_readings_found"] = len(typed)
-    tot["typed_readings_added"] = append_typed(run, typed)     # hand-typed readings -> typed_readings.tsv
-    write_tsv(os.path.join(run, "reverify_numbers.tsv"), NUMBER_REPORT_COLS, measured)
+                                         dry_run=dry_run, skip=set(flagged_files), log=log)
+    tot["measure"] = measure_summary(measured_all)
+    tot["typed_readings_found"] = typed_found
+    tot["typed_readings_added"] = typed_added
+    write_tsv(os.path.join(run, "reverify_numbers.tsv"), NUMBER_REPORT_COLS, measured_all)
     from .html_report import page
     with open(os.path.join(run, "reverify_report.html"), "w", encoding="utf-8") as f:
         f.write(page(f"Reverify — {os.path.basename(run)}", _markdown(tot)))
-    write_tsv(os.path.join(run, "reverify_report.tsv"), REPORT_COLS, report)   # (dict rows)
+    write_tsv(os.path.join(run, "reverify_report.tsv"), REPORT_COLS, report_all)   # (dict rows)
     _write_json_atomic(os.path.join(run, "reverify_report.json"), tot)
-    if moved:
+    if moved_now:                                 # counts from the folders (right after any interruption too)
         s = _summary(run)
         if s:
-            s["verbalized"] = max(0, int(s.get("verbalized") or 0) - len(moved))
-            s["reverify"] = int(s.get("reverify") or 0) + len(moved)
+            s.update(folder_counts(run))
             _write_json_atomic(os.path.join(run, "summary.json"), s)
     return tot
 

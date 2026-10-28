@@ -27,7 +27,7 @@ unit: segment                     # verbalize: segment (whole sentence) | word (
                                   #   scored on the number's frames + context_words)
 pad_s: 0.25                       # seconds of audio padding around a segment / word window
 context_words: 1                  # word unit: neighbouring words on each side
-max_candidates: 16                # readings scored per number (first = default reading)
+max_candidates: 32                # readings scored per number (first = default reading); 16 cut 1.3% of v2 numbers
 style: contracted                 # default native compound style: contracted | glide
 margin_threshold: 1.5             # nats; best-vs-runner-up below this -> needs_review
 style_margin: 2.0                 # nats; spelling of the chosen reading: the audio's spelling (contracted /
@@ -41,6 +41,11 @@ hyp_pad_s: 0.5                    # compare only: base-hypothesis text searched 
                                   #   many seconds. Measurement only, never changes a pick. Larger
                                   #   finds shifted segments (higher oracle) but more chance matches.
 length_norm: false                # compare NLL per token instead of total NLL
+form_costs:                       # nats added before the pick to readings the audio over-picks
+  nosuffix: 6.5                   #   (shorter text scores lower; fitted on v1 + v2 verifier decisions):
+  short_split: 8.0                #   suffix left out / digit by digit up to 3 digits /
+  percent: 1.5                    #   പെർസെന്റ് instead of പെർസെന്റേജ് / bare hour without മണി
+  bare_hour: 1.0                  #   ({} = no costs)
 sample_rate: 16000                # must equal the model's preprocessor sample_rate
 out_dir: data/verbalized          # verbalize writes OUT_DIR/<data dir name>/:
                                   #   verbalized/<stem>.json  input schema, texts verbalized (all numbers confident)

@@ -48,13 +48,20 @@ def _lang(lang: str):
 
 
 def candidates(number: Union[str, NumberSpan], lang: str = "ml",
-               style: str = "contracted", latin: bool = False, next_word: str = "") -> List[Candidate]:
+               style: str = "contracted", latin: bool = False, next_word: str = "",
+               alone: bool = False) -> List[Candidate]:
     """Spoken readings of one number (a token core like '4:00-5:00' or a NumberSpan).
     First = default. ``style`` is "contracted" (ഇരുപത്തഞ്ച്) or "glide" (ഇരുപത്തിയഞ്ച്).
     ``latin=True`` (the sentence is English): Latin-script English readings (five, twelve thirty)."""
     if isinstance(number, NumberSpan):
-        return _lang(lang).candidates(number.core, number.cls, style, latin, next_word)
-    return _lang(lang).candidates(number, None, style, latin, next_word)
+        return _lang(lang).candidates(number.core, number.cls, style, latin, next_word, alone)
+    return _lang(lang).candidates(number, None, style, latin, next_word, alone)
+
+
+def alone(text: str) -> bool:
+    """True when a sentence has no words, only numbers and punctuation ("89.", "83, 73.")."""
+    import re as _re
+    return not _re.search(r"[^\W\d_]", text or "")
 
 
 def next_word(text: str, span: NumberSpan) -> str:
@@ -91,7 +98,7 @@ def verbalize(text: str, lang: str = "ml", style: str = "contracted",
         latin = is_english(text)
     out, pos = [], 0
     for span in find(text):
-        cands = candidates(span, lang, style, latin, next_word(text, span))
+        cands = candidates(span, lang, style, latin, next_word(text, span), alone(text))
         choice = chooser(span, cands) if chooser else None
         out.append(text[pos:span.start])
         out.append(_pick(choice, cands))

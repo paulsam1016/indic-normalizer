@@ -1,7 +1,7 @@
 """The verifier's single HTML page (inline CSS + JS, no network)."""
 
 PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Digits verifier</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Verifier</title>
 <style>
 :root{--bg:#fbfbfa;--panel:#fff;--fg:#1d1d1f;--muted:#6b6b70;--line:#e2e2e5;--hover:#f3f3f6;--accent:#2f6fde;
 --accbg:#e8f0fd;--ok:#1f7a4d;--okbg:#e5f4ec;--warn:#8a5a00;--warnbg:#fdf1d8;--bad:#b42318;--badbg:#fde7e5;--code:#f0f0f2}
@@ -16,7 +16,7 @@ button{cursor:pointer}button:hover{background:var(--hover)}button.primary{backgr
 button:disabled{opacity:.5;cursor:default}
 .path{min-width:260px;flex:1}
 main{flex:1;display:flex;min-height:0}
-aside{width:300px;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--panel)}
+aside{width:320px;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--panel)}
 aside .tools{padding:8px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
 #files{overflow:auto;flex:1}
 .f{padding:7px 10px;border-bottom:1px solid var(--line);cursor:pointer}.f:hover{background:var(--hover)}
@@ -56,11 +56,15 @@ table.rv{border-collapse:collapse;width:100%;margin-top:10px;font-size:13px}
 table.rv th,table.rv td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
 table.rv th{color:var(--muted);font-weight:600}
 .later{color:var(--warn)}.custompick{color:var(--accent)}
+#autoplay.on{background:var(--accbg);border-color:var(--accent);color:var(--accent)}
+.tabs .sep{flex:1}.tab.sents{border-style:dashed}
+textarea.sedit{width:100%;box-sizing:border-box;min-height:3.2em;font:inherit;font-size:15px;color:var(--fg);background:var(--bg);border:1px solid var(--accent);border-radius:6px;padding:6px 8px}
+.stext{font-size:15px;margin:6px 0 2px}.was{font-size:12px;color:var(--muted);margin-top:2px}
 details{margin:6px 0}summary{cursor:pointer;color:var(--accent)}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:8px 0;font-size:13px}dt{font-weight:600}dd{margin:0}
 </style></head><body>
 <header>
- <h1>Digits verifier</h1>
+ <h1>Verifier</h1>
  <label title="A verbalize output folder: OUT_DIR/&lt;data dir&gt; (contains verify/, failed/, verify.tsv, failed.tsv)">Run folder
   <input id="run" class="path" placeholder="…\verbalized\eval_frozen"></label><button data-b="run">Browse…</button>
  <label title="Folder with the &lt;stem&gt;.wav files">Audio folder <input id="aud" class="path" placeholder="…\audio\eval_frozen"></label><button data-b="aud">Browse…</button>
@@ -93,6 +97,7 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:8px 0;
   number; if a word was left out (അമ്പത്തയ്യായിരം <i>രൂപ</i>യുടെ) type the whole reading, it replaces the full token.</p>
   <details open><summary>Keyboard</summary><dl>
    <dt>Space</dt><dd>play / stop the current sentence</dd><dt>R</dt><dd>replay from the start</dd>
+   <dt>A</dt><dd>autoplay on / off: each sentence plays when its number comes up</dd>
    <dt>1 – 9</dt><dd>choose that candidate for the current number</dd><dt>0</dt><dd>type a custom reading</dd>
    <dt>L</dt><dd>leave this number for later (stays open)</dd>
    <dt>G</dt><dd>candidate generator (🔢): readings of any number you type; <i>Use</i> sets it for the current number</dd>
@@ -104,6 +109,7 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:8px 0;
 <footer id="foot" style="display:none">
  <span id="status" class="muted"></span>
  <span style="flex:1"></span>
+ <button id="autoplay" title="play each sentence when its number comes up (A)">▶ Autoplay: off</button>
  <label title="Seconds of audio played before / after the sentence">pad <input id="pad" type="number" value="0.3" step="0.1" min="0" style="width:60px"> s</label>
  <label>speed <select id="rate"><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option></select></label>
  <audio id="au" preload="none"></audio>
@@ -200,7 +206,7 @@ function openFile(name,kind){api('/api/file?file='+encodeURIComponent(name)+'&ki
  S.cur={file:name,kind:kind};S.doc=d;S.choice={};S.flat=[];S.focus=0;
  d.sentences.forEach(function(s){S.choice[s.idx]=s.numbers.map(function(n){return n.model_pick;});s.numbers.forEach(function(n,j){S.flat.push([s.idx,j]);});});
  var au=$('au');au.pause();au.src=d.has_audio?'/api/audio?file='+encodeURIComponent(name):'';
- S.tab='check';S.pv={};S.edits={};S.editing=null;renderFile();renderFiles();$('foot').style.display='flex';preview();
+ S.tab='check';S.pv={};S.edits={};S.editing=null;S.sedit=null;S.lastAuto=null;renderFile();renderFiles();$('foot').style.display='flex';preview();
  S.focus=0;setTab(S.flat.length?'check':'review');
 }).catch(function(e){toast(e.message,6000);});}
 function numOf(x){var s=S.doc.sentences.find(function(s){return s.idx===x[0];});return s.numbers[x[1]];}
@@ -214,7 +220,8 @@ function renderFile(){var d=S.doc,h='';
  if(d.error){h+='<p class="help" style="color:var(--bad)">'+esc(d.error)+'</p>';$('view').innerHTML=h;$('save').disabled=true;return;}
  h+='<p class="help">'+S.flat.length+' open number(s) in '+d.sentences.length+' of '+d.n_sentences+' sentences. The text below already has the decided numbers verbalized.</p>';
  h+='<div class="tabs"><button class="tab" id="tabC" title="one number at a time">1 · Check <span id="tcount" class="muted"></span></button>'+
-    '<button class="tab" id="tabR" title="all choices, then save">2 · Review &amp; save</button></div>';
+    '<button class="tab" id="tabR" title="all choices, then save">2 · Review &amp; save</button><span class="sep"></span>'+
+    '<button class="tab sents" id="tabS" title="the whole transcript: fix the text of any sentence (saved at once)">✎ Sentences</button></div>';
  h+='<div id="pane-check"><div class="stepbar"><button id="prev" title="← / K">◀ Prev</button><span id="step" class="muted"></span>'+
     '<span style="flex:1"></span><button class="primary" id="next" title="Enter / →">Next ▶</button></div>';
  d.sentences.forEach(function(s){h+='<div class="card" id="s'+s.idx+'"><div class="sh"><button data-play="'+s.idx+'" title="Space"'+(d.has_audio?'':' disabled')+'>▶ '+fmt(s.start)+' – '+fmt(s.end)+'</button>'+
@@ -231,9 +238,12 @@ function renderFile(){var d=S.doc,h='';
   h+='</div>';});
  h+='</div><div id="pane-review" style="display:none">'+
     '<div class="savebar"><button class="primary" id="save" title="Ctrl+Enter">Save</button><span id="rstatus" class="muted"></span>'+
-    '<span style="flex:1"></span><button id="back">◀ Back to checking</button></div><div id="rlist"></div></div>';
+    '<span style="flex:1"></span><button id="back">◀ Back to checking</button></div><div id="rlist"></div></div>'+
+    '<div id="pane-sent" style="display:none"><p class="help">Every sentence of the file. <b>Edit</b> fixes its text (wrong words, typos); it is saved at once, '+
+    'separately from the numbers, and logged in sentence_edits.tsv. Numbers are written in words; the sentence\'s words get new timings spread over its span '+
+    '(approximate). A sentence with open numbers can be edited after they are decided.</p><div id="slist"></div></div>';
  $('view').innerHTML=h;$('save').disabled=false;$('save').onclick=save;
- $('tabC').onclick=function(){setTab('check');};$('tabR').onclick=function(){setTab('review');};
+ $('tabC').onclick=function(){setTab('check');};$('tabR').onclick=function(){setTab('review');};$('tabS').onclick=function(){setTab('sent');};
  $('prev').onclick=function(){go(S.focus-1);};$('next').onclick=next;$('back').onclick=function(){setTab('check');};
  $('view').querySelectorAll('button[data-play]').forEach(function(b){b.onclick=function(){play(+b.dataset.play);};});
  $('view').querySelectorAll('input[type=radio]').forEach(function(r){r.onchange=function(){var m=r.name.slice(1).split('_'),si=+m[0],j=+m[1];
@@ -252,10 +262,43 @@ function preview(){if(!S.cur||S.doc.error)return;api('/api/preview',{file:S.cur.
  if(ned)$('status').textContent+=' · '+ned+' decided number(s) changed';
  if($('save')){$('save').disabled=!dec&&!ned;$('save').textContent=fin?'Save changes':open?'Save (keep '+open+' open)':'Save → verbalized';}
  if($('tcount'))$('tcount').textContent=dec+'/'+S.flat.length;if(S.tab==='review')renderReview();}).catch(function(){});}
-function setTab(t){if(!$('pane-check'))return;S.tab=t;var c=t==='check';
- $('pane-check').style.display=c?'':'none';$('pane-review').style.display=c?'none':'';
- $('tabC').classList.toggle('on',c);$('tabR').classList.toggle('on',!c);
- if(c)markFocus(true);else{renderReview();$('view').scrollTop=0;}}
+function setTab(t){if(!$('pane-check'))return;S.tab=t;var c=t==='check',r=t==='review',s=t==='sent';
+ $('pane-check').style.display=c?'':'none';$('pane-review').style.display=r?'':'none';$('pane-sent').style.display=s?'':'none';
+ $('tabC').classList.toggle('on',c);$('tabR').classList.toggle('on',r);$('tabS').classList.toggle('on',s);
+ if(c)markFocus(true);else if(r){renderReview();$('view').scrollTop=0;}else{renderSentences();$('view').scrollTop=0;}}
+
+// ---------------------------------------------------------------- sentences (text edits)
+function renderSentences(){var d=S.doc,L=d.all_sentences||[],h='';
+ if(!d.can_edit_sentences)h='<p class="help">'+(d.kind==='failed'?'A failed file is the unchanged input: decide its numbers first (Save moves it to verify/), then edit sentences.':'This file has no sentence list, so its text can\'t be edited here.')+'</p>';
+ L.forEach(function(s){var ed=S.sedit===s.idx;
+  h+='<div class="card" id="ss'+s.idx+'"><div class="sh"><button data-splay="'+s.idx+'"'+(d.has_audio&&s.start!=null?'':' disabled')+'>▶ '+fmt(s.start)+' – '+fmt(s.end)+'</button>'+
+   '<span>sentence '+s.idx+(s.speaker?' · speaker '+esc(s.speaker):'')+'</span>'+(s.edited?' <span class="pill done" title="edited by hand">edited</span>':'')+'<span style="flex:1"></span>'+
+   (ed?'':(s.locked?'<span class="muted" title="decide its numbers first">open numbers</span>':'<button data-sedit="'+s.idx+'">Edit</button>'))+'</div>';
+  if(ed)h+='<textarea class="sedit" id="stx">'+esc(s.text)+'</textarea><div class="savebar"><button class="primary" id="ssave" title="Ctrl+Enter">Save sentence</button><button id="scancel">Cancel</button>'+
+     (d.has_audio&&s.start!=null?'<button id="splay2" title="Space outside the box">▶ Play</button>':'')+'<span class="help">numbers in words · punctuation is removed like the rest of the text</span></div>';
+  else h+='<div class="stext">'+(s.locked?hl(s.text,(s.text.match(/[0-9\u0d66-\u0d6f][^\s]*/g)||[])):esc(s.text))+'</div>';
+  if(s.edited&&s.original)h+='<div class="was">was: '+esc(s.original)+'</div>';
+  h+='</div>';});
+ $('slist').innerHTML=h;
+ $('slist').querySelectorAll('button[data-splay]').forEach(function(b){b.onclick=function(){playS(+b.dataset.splay);};});
+ $('slist').querySelectorAll('button[data-sedit]').forEach(function(b){b.onclick=function(){S.sedit=+b.dataset.sedit;renderSentences();var t=$('stx');if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length);}autoPlay(S.sedit,true);};});
+ if($('stx')){$('scancel').onclick=function(){S.sedit=null;renderSentences();};$('ssave').onclick=saveSentence;
+  if($('splay2'))$('splay2').onclick=function(){playS(S.sedit);};
+  var el=$('ss'+S.sedit);if(el)el.scrollIntoView({block:'center'});}}
+function playS(si){var s=(S.doc.all_sentences||[]).find(function(x){return x.idx===si;});if(!s)return;
+ var au=$('au');if(!au.src||!S.doc.has_audio){toast('no audio for this file');return;}var pad=parseFloat($('pad').value)||0;
+ var go=function(){au.currentTime=Math.max(0,(+s.start||0)-pad);stopAt=(+s.end||0)+pad;au.playbackRate=+$('rate').value;safePlay(au);};
+ if(au.readyState<1){au.preload='metadata';au.addEventListener('loadedmetadata',go,{once:true});au.load();}else go();}
+function saveSentence(){var si=S.sedit,t=$('stx');if(si==null||!t||S.ssaving)return;var v=t.value.split(/\s+/).join(' ').trim();
+ if(!v){toast('the sentence is empty');return;}if(/[0-9\u0d66-\u0d6f]/.test(v)){toast('write numbers in words (no digits)');return;}
+ S.ssaving=true;$('ssave').disabled=true;
+ api('/api/sentence',{file:S.cur.file,kind:S.cur.kind,rev:S.doc.rev,sentence:si,text:v}).then(function(r){
+  S.doc.rev=r.rev;var s=S.doc.all_sentences.find(function(x){return x.idx===si;});
+  if(!s.edited)s.original=r.before;s.text=r.text;s.edited=true;
+  (S.doc.decided||[]).forEach(function(x){if(+x.sentence===si)x.sentence_edited=true;});
+  S.sedit=null;renderSentences();toast('✓ sentence '+si+' saved'+(r.text!==v?' (normalized: '+r.text+')':''));
+ }).catch(function(e){toast(e.message,7000);if(/changed since it was opened/.test(e.message))openFile(S.cur.file,S.cur.kind);})
+ .then(function(){S.ssaving=false;if($('ssave'))$('ssave').disabled=false;});}
 function go(i){if(!S.flat.length)return;S.focus=Math.max(0,Math.min(S.flat.length-1,i));if(S.tab!=='check')setTab('check');else markFocus(true);}
 function next(){if(S.focus<S.flat.length-1)go(S.focus+1);else setTab('review');}
 function renderReview(){var h='<table class="rv"><tr><th>#</th><th>Number</th><th>Reading</th><th>Sentence (as it will be written)</th><th></th></tr>';
@@ -273,7 +316,7 @@ function renderReview(){var h='<table class="rv"><tr><th>#</th><th>Number</th><t
   D.forEach(function(r){var ed=S.edits[r.id],cur=ed!=null?ed:r.final_pick;
    h+='<tr><td><mark>'+esc(r.core)+'</mark><div class="muted" style="font-size:12px">sentence '+esc(r.sentence)+'</div></td><td>'+esc(cur)+
     (ed!=null?' <span class="custompick">(changed — was '+esc(r.final_pick)+')</span>':' <span class="pill '+(r.status==='verified'?'done':'verify')+'">'+esc(r.status)+'</span>')+'</td>'+
-    '<td>'+esc(r.sentence_text)+'</td><td style="white-space:nowrap">'+(S.doc.has_audio&&r.start!=null&&r.start!==''?'<button data-dplay="'+esc(r.sentence)+'" title="play this sentence">▶</button> ':'')+(S.doc.can_edit_decided?'<button data-dedit="'+esc(r.id)+'">Edit</button>':'')+
+    '<td>'+esc(r.sentence_text)+'</td><td style="white-space:nowrap">'+(S.doc.has_audio&&r.start!=null&&r.start!==''?'<button data-dplay="'+esc(r.sentence)+'" title="play this sentence">▶</button> ':'')+(S.doc.can_edit_decided&&!r.sentence_edited?'<button data-dedit="'+esc(r.id)+'">Edit</button>':(r.sentence_edited?'<span class="muted" title="change it in the Sentences section">sentence edited</span>':''))+
     (ed!=null?' <button data-undo="'+esc(r.id)+'">Undo</button>':'')+'</td></tr>';
    if(S.editing===r.id){var opts=r.candidates.slice();if(opts.indexOf(r.final_pick)<0)opts.unshift(r.final_pick);
     h+='<tr><td></td><td colspan="3"><div class="cands">'+opts.map(function(c,i){return '<label'+(c===cur?' class="on"':'')+'><input type="radio" name="de" value="'+esc(c)+'"'+(c===cur?' checked':'')+'> '+esc(c)+
@@ -301,14 +344,26 @@ function markFocus(scroll){document.querySelectorAll('.card.cur').forEach(functi
  var c=$('s'+x[0]);c.classList.add('cur');document.querySelectorAll('.num').forEach(function(n){n.style.outline='';n.classList.remove('numcur');});var n=$('n'+x[0]+'_'+x[1]);n.style.outline='2px solid var(--accent)';n.style.outlineOffset='3px';n.classList.add('numcur');
  if($('step'))$('step').textContent='Number '+(S.focus+1)+' of '+S.flat.length+' · sentence '+x[0];
  if($('prev'))$('prev').disabled=S.focus===0;if($('next'))$('next').textContent=S.focus<S.flat.length-1?'Next ▶':'Review ▶';
- if(scroll)n.scrollIntoView({block:'center',behavior:'smooth'});}
+ if(scroll)n.scrollIntoView({block:'center',behavior:'smooth'});
+ autoPlay(x[0]);}
 
 // ---------------------------------------------------------------- audio
+function safePlay(au){var p=au.play();if(p&&p.catch)p.catch(function(){});}   // a blocked / interrupted play is not an error
+function setAutoplay(on){S.autoplay=!!on;try{localStorage.setItem('verifier.autoplay',on?'1':'0');}catch(e){}
+ var b=$('autoplay');if(b){b.textContent='▶ Autoplay: '+(on?'on':'off');b.classList.toggle('on',!!on);b.setAttribute('aria-pressed',on?'true':'false');}
+ if(on){S.lastAuto=null;if(S.tab==='check'&&S.flat[S.focus])autoPlay(S.flat[S.focus][0]);else if(S.tab==='sent'&&S.sedit!=null)autoPlay(S.sedit,true);}
+ else{var a=$('au');if(a&&!a.paused)a.pause();}}
+// play a sentence once when it comes up (not again for the next number of the same sentence)
+function autoPlay(si,sent){if(!S.autoplay||!S.cur||!S.doc||!S.doc.has_audio)return;var key=S.cur.file+'|'+(sent?'s':'n')+si;
+ if(S.lastAuto===key)return;S.lastAuto=key;if(sent)playS(si);else play(si);}
+$('autoplay').onclick=function(){setAutoplay(!S.autoplay);this.blur();};
+try{S.autoplay=localStorage.getItem('verifier.autoplay')==='1';}catch(e){S.autoplay=false;}
+setAutoplay(S.autoplay);
 var stopAt=null;
 function play(si){var au=$('au');if(!au.src||!S.doc.has_audio){toast('no audio for this file');return;}
  var s=S.doc.sentences.find(function(s){return s.idx===si;})||(S.doc.decided||[]).filter(function(r){return +r.sentence===si;}).map(function(r){return {start:r.start,end:r.end};})[0];
  if(!s||s.start==null){toast('no time for this sentence');return;}var pad=parseFloat($('pad').value)||0;
- var go=function(){au.currentTime=Math.max(0,(+s.start||0)-pad);stopAt=(+s.end||0)+pad;au.playbackRate=+$('rate').value;au.play();};
+ var go=function(){au.currentTime=Math.max(0,(+s.start||0)-pad);stopAt=(+s.end||0)+pad;au.playbackRate=+$('rate').value;safePlay(au);};
  if(au.readyState<1){au.preload='metadata';au.addEventListener('loadedmetadata',go,{once:true});au.load();}else go();}
 $('au').addEventListener('timeupdate',function(){if(stopAt!=null&&this.currentTime>=stopAt){this.pause();stopAt=null;}});
 $('rate').onchange=function(){$('au').playbackRate=+this.value;};
@@ -319,23 +374,28 @@ function save(){if(!S.cur||!$('save')||$('save').disabled||S.saving)return;var d
  var old=S.files.slice(),i=old.findIndex(function(f){return f.file===done.file&&f.kind===done.kind;});
  api('/api/save',{file:done.file,kind:done.kind,rev:S.doc.rev,picks:picks(),edits:S.edits}).then(function(r){
   if(done.kind==='verbalized'){toast('✓ '+r.file+': '+r.decided+' change(s) saved in verbalized/'+(r.typed?' · '+r.typed+' typed reading(s) logged':''));
-   return state().then(function(){openFile(done.file,'verbalized');});}
+   openFile(done.file,'verbalized');return state();}
   toast((r.done?'✓ '+r.file+' → verbalized':'✓ '+r.file+': '+r.decided+' saved, '+r.open+' still open (in '+done.kind.replace('failed','verify')+'/)')+(r.typed?' · '+r.typed+' typed reading(s) saved to typed_readings.tsv':''));
-  return state().then(function(){var k=$('kind').value;      // next file from the FRESH list
-   var after=old.slice(i+1).concat(old.slice(0,Math.max(i,0))).map(function(f){return f.file+'|'+f.kind;});
-   var live=S.files.filter(function(f){return (k?fileKind(f)===k:f.kind!=='verbalized')&&!(f.file===done.file);});
-   var next=live.slice().sort(function(a,b){var x=after.indexOf(a.file+'|'+a.kind),y=after.indexOf(b.file+'|'+b.kind);return (x<0?1e9:x)-(y<0?1e9:y);})[0];
-   if(!next&&!r.done)next=S.files.find(function(f){return f.file===done.file;});   // only this file is left: reopen it
-   if(next)openFile(next.file,next.kind);else{S.cur=null;$('view').innerHTML='<h2>All done 🎉</h2><p>Nothing left in this list.</p>';$('foot').style.display='none';}});
+  // the next file comes from the list as it was (only the saved file changed), so it opens right
+  // away while the list and counts refresh alongside, instead of one request after the other
+  var k=$('kind').value,after=old.slice(i+1).concat(old.slice(0,Math.max(i,0)));
+  var next=after.find(function(f){return (k?fileKind(f)===k:f.kind!=='verbalized')&&f.file!==done.file;});
+  if(next){openFile(next.file,next.kind);return state();}
+  return state().then(function(){var again=!r.done&&S.files.find(function(f){return f.file===done.file;});   // only this file is left: reopen it
+   if(again)openFile(again.file,again.kind);else{S.cur=null;$('view').innerHTML='<h2>All done 🎉</h2><p>Nothing left in this list.</p>';$('foot').style.display='none';}});
  }).catch(function(e){toast(e.message,7000);if(/changed since it was opened/.test(e.message))openFile(done.file,done.kind);else $('save').disabled=false;})
  .then(function(){S.saving=false;});}
 // (the Save button lives in the Review tab; bound in renderFile)
 
 // ---------------------------------------------------------------- keyboard
 document.addEventListener('keydown',function(e){if($('browse').open||$('gdlg').open)return;
- var typing=e.target.tagName==='INPUT'&&e.target.type!=='radio'||e.target.tagName==='SELECT';
+ var typing=e.target.tagName==='INPUT'&&e.target.type!=='radio'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA';
  if(!typing&&(e.key==='g'||e.key==='G')&&!e.ctrlKey&&!e.metaKey){e.preventDefault();openGen();return;}
+ if(!typing&&(e.key==='a'||e.key==='A')&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();setAutoplay(!S.autoplay);return;}
  if(!S.cur)return;
+ if(S.tab==='sent'){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&$('stx')){e.preventDefault();saveSentence();}
+  else if(e.key==='Escape'&&$('stx')){S.sedit=null;renderSentences();}
+  else if(!typing&&e.key===' '&&S.sedit!=null){e.preventDefault();var a=$('au');if(!a.paused)a.pause();else playS(S.sedit);}return;}
  if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();if(S.tab==='check')setTab('review');else save();return;}
  if(typing){if(e.key==='Escape')e.target.blur();
   else if(e.key==='Enter'&&e.target.classList.contains('custom')&&S.tab==='check'){e.preventDefault();e.target.blur();next();}return;}
