@@ -305,9 +305,9 @@ def _verbalize_digits(m: "re.Match[str]") -> str:
 # every covered value — no fragile hand-written sandhi parser.
 #   _WORD2NUM   fused multi-part forms 0-9999 ("ഇരുപത്തിനാല്" -> 24);
 #   _ONE2DIGIT  the single ONES words, for digit-by-digit id-like runs ("ഏഴ്" -> "7").
-# In inference mode English-style number words are first resolved to native words upstream
-# (E9 still runs), so by the time _to_digits sees the text EVERY number is a native fused
-# form or an ASCII run — one place converts them all to digits.
+# These tables back the legacy per-token helpers; the inference pass itself now goes through
+# malayalam_itn (_to_digits), which inverts the digits module's generator and also covers
+# English words, lakhs/crores, suffixes, halves, percent and the k form directly (no E9 step).
 _WORD2NUM = {_num_words(n): n for n in range(0, 10000)}
 _ONE2DIGIT = {w: str(i) for i, w in enumerate(_ONES)}
 
@@ -468,14 +468,10 @@ def _itn_token(tok: str) -> str:
 
 
 def _to_digits(text: str) -> str:
-    """ITN: rewrite native Malayalam number words back to digits.
-
-    Handles fused numeric words (24 <- ഇരുപത്തിനാല്), spaced digit-by-digit id runs
-    (007 <- പൂജ്യം പൂജ്യം ഏഴ്), and number words adjacent to preserved punctuation
-    (24, <- ഇരുപത്തിനാല്,); non-number tokens are left untouched.
-    """
-    tokens = _itn_digit_by_digit(text.split())
-    return " ".join(_itn_token(t) for t in tokens)
+    """ITN: number words (native in every spelling, English in Malayalam script) -> digits.
+    The inference pass; see malayalam_itn (built by inverting the digits module's readings)."""
+    from .malayalam_itn import itn
+    return itn(text)
 
 
 # --- English-style number words (Malayalam script, as base models write code-mixed
@@ -629,6 +625,9 @@ def _is_numberish(core: str) -> bool:
         return False
     if core[0].isdigit() or core in _ONE2DIGIT or core in _WORD2NUM or core in _EN_ANY:
         return True
+    from . import malayalam_itn as _itn          # every spelling the digits module writes
+    if core in _itn._combining() or _itn._word_info(core) is not None or _itn.split_suffix(core):
+        return True
     return core.endswith("ു") and (core[:-1] + _VIRAMA) in _WORD2NUM   # രണ്ടു, ആറു
 
 
@@ -737,11 +736,10 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
         return _SPACE.sub(" ", text).strip()           # E11
 
     # --- inference: reader-facing ITN (keep E5 punctuation + E10 case; number words -> digits) ---
-    # Existing digits are left exactly as written (4:00-5:00 stays 4:00-5:00). E9 resolves
-    # English-style number words to native words, then one ITN pass turns every number WORD
-    # (native or English-derived) into digits.
+    # Existing digits are left exactly as written (4:00-5:00 stays 4:00-5:00). One ITN pass
+    # (malayalam_itn) turns every number WORD into digits: native in every spelling the digits
+    # module writes, English in Malayalam script, lakhs / crores, suffixes, decimals, percent.
     text = _hold_lone_one(text)                    # I1:  standalone ഒന്ന് = "just/once", not 1
-    text = _canonicalize_en_numbers(text)          # E9:  "ട്വൻറ്റി ഫോർ" -> "ഇരുപത്തിനാല്"
     text = _to_digits(text)                        # ITN: number words -> digits
     text = text.replace(_ONE_HOLD, "ഒന്ന്").replace(_ONEU_HOLD, "ഒന്നു")
     return _SPACE.sub(" ", text).strip()           # E11 (punctuation + case preserved)

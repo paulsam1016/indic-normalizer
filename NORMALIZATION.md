@@ -118,7 +118,7 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
 | E6 | Indic-digit → ASCII (`൦-൯`→`0-9`) | CER | ★ trivial | Fixed 10-codepoint translation table. Feeds verbalization. |
 | E7 | Digit-grouping commas, Western **and Indian lakh** (`70,000`, `1,75,000`→`175000`) | CER + WER | ★★ easy | Regex over the whole grouped number (`1,2,3` lists untouched); must fire before `,`→space so both surface forms meet — ordering-sensitive. The old 3-digit-only rule split `1,75,000` into `1 75000` (24× on eval_frozen). |
 | E8 | Native digit verbalization (`24`→`ഇരുപത്തിനാല്`) | WER + CER | ★★★★ hard | Bespoke number-to-Malayalam-words logic: runs up to 7 digits are read as a number — thousands fused (`12000`→`പന്ത്രണ്ടായിരം`, `20000`→`ഇരുപതിനായിരം`, `12500`→`പന്ത്രണ്ടായിരത്തിയഞ്ഞൂറ്`), lakhs as a spaced word the way ASR writes them (`200000`→`രണ്ട് ലക്ഷം`, `175000`→`ഒരു ലക്ഷത്തി എഴുപത്തിയഞ്ചായിരം`); 8+ digits or a leading zero (phones, IDs) read digit-by-digit; sandhi glide `യ` at joins. **`eval` mode only.** |
-| E9 | English-style number words → canonical Malayalam (`ട്വൻറ്റി ഫോർ`→`ഇരുപത്തിനാല്`) | WER + CER | ★★★★ hard | Convention-invariant scoring: a spelling-tolerant word parser, with ambiguous `ടു`/`ഫോർ` converted only beside an unambiguous number word, and lakh units mapped. **`inference` mode only** (→ digits); not in `eval` or `train`. |
+| E9 | English-style number words → canonical Malayalam (`ട്വൻറ്റി ഫോർ`→`ഇരുപത്തിനാല്`) | WER + CER | ★★★★ hard | Convention-invariant scoring: a spelling-tolerant word parser, with ambiguous `ടു`/`ഫോർ` converted only beside an unambiguous number word, and lakh units mapped. Was **`inference` only**; inference now reads English words directly in the ITN (`malayalam_itn`), so E9 is no longer called there. Not in `eval` or `train`. |
 | E10 | Lowercasing | CER | ★ trivial | `str.lower()`, for code-mixed Latin tokens. |
 | E11 | Whitespace collapse + trim | WER | ★ trivial | One regex: multiple spaces → one. |
 | E13 | Annotation tags (`<unintelligible>`, `<noise>`) | WER | ★ trivial | Whole tag dropped; E5 alone would leave the tag name as a fake word (123 in dataset refs). **`eval` + `inference`**; `train` leaves tags to the data pipeline. |
@@ -177,9 +177,9 @@ A shared **canonicalization base** runs identically in all three modes.
 | E7 digit-grouping comma (`70,000`, `1,75,000`→`175000`) | ✓ | ✓ | ✓ |
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
 | **E5 punctuation removal** | strip | strip | **keep** |
-| **E9 English-number words** | — (left as written) | — (left as written) | **→ digits** (via native words + ITN) |
+| **E9 English-number words** | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
 | **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit) | — (left as digits) | — (left as digits) |
-| **ITN number words → digits** | — | — | **✓** (ordinals only for fused suffixes; lone `ഒന്ന്` only in numeric context) |
+| **ITN number words → digits** | — | — | **✓** (`malayalam_itn`; 1–9 + suffix stays words except ordinals; lone `ഒന്ന്` only in numeric context) |
 | **E10 lowercase** | ✓ | ✓ | **keep case** |
 | **C1 samvruthokaram fold** (`നാലു`→`നാല്`) | ✓ | — (target keeps real spelling) | — (would strip a real `-u` for a reader) |
 | W3/W4/W5 segmentation (`segmentation=True`, default off) | opt-in | opt-in | — |
@@ -190,12 +190,21 @@ is only right *inside* a word (`ദു:ഖം` → `ദുഃഖം`). A colon f
 is punctuation (`ആണ്: …`, `പറ:`) and is protected from indic-nlp, so eval/train strip it and
 inference keeps it. On the eval_frozen set this removed 12 spurious visargas (12 → 0).
 
-**Inference ITN details.** The parser composes number-word units greedily (round-trips all
-values 0–9999). A numeral fused with a suffix is converted **only for the ordinal family**
-(`ാം`, `ാമത്`, `ാമത്തെ`, …: `പത്താം`→`10-ാം`, `ഇരുപത്തിയൊന്നാം`→`21-ാം`); other fusions are
-idioms, not numbers (`ഒന്നും` "anything", `രണ്ടും` "both", `ഒന്നിച്ച്` "together") and are left
-as words. A numeral spoken with its own `‑ു` ending is just the number (`രണ്ടു`→`2`). Words that
-merely contain a number substring are never touched (`ഫ്രണ്ടിൽ` "front", `ആയിരിക്കും`).
+**Inference ITN details.** `malayalam_itn` is built by inverting the digits module's
+generator (`indic_normalizer.digits.ml`), so every reading the training targets use reads back:
+contracted / glide / spaced spellings (`ഇരുപത്തഞ്ച്` / `ഇരുപത്തിയഞ്ച്` / `ഇരുപത്തി അഞ്ച്`→`25`),
+English words (`ട്വന്റി ഫൈവ്`→`25`), lakhs and crores in Indian grouping
+(`രണ്ട് ലക്ഷത്തി ഇരുപത്തിയഞ്ചായിരം`→`2,25,000`), suffixes for 10 and up (`ഇരുപത്തിയേഴിന്`→`27-ന്`),
+decimals and halves (`രണ്ട് പോയിന്റ് അഞ്ച്` / `രണ്ടര`→`2.5`; `മൂന്നരയ്ക്ക്`→`3:30-ന്`), percent
+(`ടു പെർസെന്റ്`→`2%`), digit runs with `ഡബിൾ`/`ട്രിപ്പിൾ`, the k form (`ട്വന്റി കെ`→`20k`) and
+English ordinals (`ട്വന്റി ഫിഫ്ത്ത്`→`25th`). A word counts as a number only if the generator
+produces exactly that word, and as number + suffix only if `ml.attach()` rebuilds it exactly, so
+`ആയിരിക്കും`, `ആയിരക്കണക്കിന്`, `പത്തിരുപത്` stay words. Left as words on purpose: 1–9 with a
+non-ordinal suffix (`ഒന്നും`, `രണ്ടും`, `നാലിൽ`), a lone `ടു`/`ഫോർ` (to / for — converted only
+next to another number word, a percent word, `കെ`, `പോയിന്റ്` or `ഓ ക്ലോക്ക്`), a lone
+`ഫസ്റ്റ്`/`സെക്കൻഡ്`, and the ambiguous shorthands (`ആറ് നാനൂറ്റമ്പത്തെട്ട്` for 6458,
+`ഒമ്പതേ അറുപത്തിനാല്`), which are read literally or kept. A repeated thousand/lakh at the same
+scale starts a new number (`ടെൻ തൗസന്റ് ഫിഫ്റ്റീൻ തൗസന്റ്`→`10000 15000`).
 
 `<unk>`/`⁇` is stripped in every mode; inference could instead map it to a marker such as `[?]`
 if model uncertainty should be shown to the reader — an open option, not implemented.

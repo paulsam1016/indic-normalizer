@@ -222,8 +222,8 @@ def attach(word: str, suffix: str) -> str:
             return pre + last + "യുടെ" + suffix[4:]   # genitive: ത്രീയുടെ
         if suffix[0] == "ന" and len(suffix) > 1 and (suffix[1] in SIGNS or suffix[1] == VIRAMA):
             return pre + last + "ക്ക" + suffix[1:]   # dative: ത്രീ + ന് -> ത്രീക്ക്
-        if suffix[0] in CHILLU_BASE or suffix.startswith("ലോ"):
-            return pre + last + "യി" + suffix        # ട്വന്റി + ൽ -> ട്വന്റിയിൽ, + ലോട്ട് -> ട്വന്റിയിലോട്ട്
+        if suffix[0] in CHILLU_BASE or suffix[0] == "ല":
+            return pre + last + "യി" + suffix        # ട്വന്റി + ൽ -> ട്വന്റിയിൽ, + ലേക്ക് -> ട്വന്റിയിലേക്ക്
         return pre + last + suffix
     if "\u0d15" <= last[-1] <= "\u0d39":            # inherent -a ending: രണ്ടര, മൂന്നര
         if vowel_suffix:

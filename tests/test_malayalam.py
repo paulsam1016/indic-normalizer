@@ -445,3 +445,46 @@ def test_train_c2_not_after_virama():
     assert train("ഹ്മ്") == "ഹ്മ്"
     assert train("അവിടെയാണ് പണം") == "അവിടെയാണ് പണം"
     assert train("വേണം വേണമ്") == "വേണം വേണം"         # ordinary word-final മ് still folds
+
+
+# --- Inference ITN v2: inverse of the digits generator (malayalam_itn) ---------------
+@pytest.mark.parametrize("text,expected", [
+    # lakhs / crores in Indian grouping
+    ("രണ്ട് ലക്ഷത്തി ഇരുപത്തിയഞ്ചായിരം", "2,25,000"),
+    ("ടു ലാക് ട്വന്റി ഫൈവ് തൗസന്റ്", "2,25,000"),
+    ("വൺ തൗസന്റ് ടു ഹൺഡ്രഡ്", "1200"),
+    # suffixes: 10 and up -> 27-ന്
+    ("ഇരുപത്തിയേഴിന്", "27-ന്"),
+    ("എയ്റ്റിലേക്കാണ്", "8-ലേക്കാണ്"),
+    ("ട്വന്റി എയ്റ്റിലാണ്", "28-ലാണ്"),
+    ("ട്വന്റിയിലേക്ക്", "20-ലേക്ക്"),
+    # halves / time
+    ("മൂന്നരയ്ക്ക് വരാം", "3:30-ന് വരാം"),
+    ("ഒരു മണി", "1 മണി"),
+    # percent, k, ambiguous ടു / ഫോർ with a numeric neighbour
+    ("ടു പെർസെന്റ്", "2%"),
+    ("ട്വന്റി കെ", "20k"),
+    ("ടു കെ", "2k"),
+    ("ഫോർ ഓ ക്ലോക്ക്", "4 ഓ ക്ലോക്ക്"),
+    # ranges stay two numbers
+    ("ടെൻ തൗസന്റ് ഫിഫ്റ്റീൻ തൗസന്റ്", "10000 15000"),
+])
+def test_itn_v2_conversions(text, expected):
+    assert infer(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    "ആയിരിക്കും", "ആയിരക്കണക്കിന്", "ഡബിൾ റൂം", "ഫസ്റ്റ് ടൈം",
+    "ഒരു കോൾ", "ഒന്ന് നോക്കട്ടെ", "ടു ദി", "ഫോർ യു",
+])
+def test_itn_v2_guards_left_as_words(text):
+    assert infer(text) == text
+
+
+def test_itn_v2_digits_roundtrip_native():
+    from indic_normalizer.languages import malayalam_itn as _itn
+    from indic_normalizer.digits import ml as _ml
+    for n in list(range(0, 1000)) + [1200, 9999, 12500, 45678, 99999]:
+        assert _itn.itn(_ml.words(n)) == _itn._fmt(n), n
+        if n not in (2, 4):                                   # lone ടു / ഫോർ = "to" / "for"
+            assert _itn.itn(_ml.en_words(n)) == _itn._fmt(n), n
