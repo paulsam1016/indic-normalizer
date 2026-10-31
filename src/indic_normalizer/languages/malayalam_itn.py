@@ -379,7 +379,9 @@ def _english(toks, i):
     """A run of English number words at i: (end, rendered) or None. Needs one unambiguous word
     (a lone ടു / ഫോർ is "to" / "for")."""
     j = i
-    while j < len(toks) and (toks[j].kind == "en" or toks[j].core in EN_REPEAT or toks[j].core == EN_K) \
+    if toks[i].core in EN_REPEAT:
+        return None                                           # ഡബിൾ ടെൻ: words (see _repeat_run)
+    while j < len(toks) and (toks[j].kind == "en" or toks[j].core == EN_K) \
             and (j == i or not toks[j].lead) and (j == i or not toks[j - 1].trail):
         j += 1
         if toks[j - 1].sfx or (toks[j - 1].kind == "en" and toks[j - 1].info[1] == "ord"):
@@ -487,12 +489,46 @@ def _digit_word(t) -> Optional[str]:
     return None
 
 
+EN_ZERO_O = {"ഒ", "ഓ"}                               # ഡബിൾ ഒ സെവൻ: the letter O as zero
+
+
+def _repeat_run(toks, i):
+    """A digit-by-digit run at i that uses ഡബിൾ / ട്രിപ്പിൾ: (end, digits) or None. Each
+    repeat word must be followed by a single digit (ഡബിൾ റൂം / ഡബിൾ ടെൻ stay words)."""
+    j, out, used = i, [], False
+    while j < len(toks) and (j == i or not toks[j].lead) and (j == i or not toks[j - 1].trail):
+        t = toks[j]
+        if t.core in EN_REPEAT:
+            if j + 1 >= len(toks) or toks[j + 1].lead or t.trail:
+                break
+            nxt = toks[j + 1]
+            d = "0" if nxt.core in EN_ZERO_O and not nxt.sfx else _digit_word(nxt)
+            if d is None:
+                break
+            out.append(d * EN_REPEAT[t.core])
+            used, j = True, j + 2
+            continue
+        d = _digit_word(t)
+        if d is None:
+            break
+        out.append(d)
+        j += 1
+    return (j, "".join(out)) if used else None
+
+
 def itn(text: str) -> str:
     """Number words in ``text`` -> digits (see the module docstring); everything else as is."""
     toks = [_Tok(t) for t in text.split()]
     out, i = [], 0
     while i < len(toks):
         t = toks[i]
+        # digit runs with ഡബിൾ / ട്രിപ്പിൾ, English or native (ഡബിൾ ടു -> 22, നൈൻ ഡബിൾ അഞ്ച് -> 955)
+        rep = _repeat_run(toks, i)
+        if rep:
+            j, digits = rep
+            out.append(t.lead + digits + toks[j - 1].trail)
+            i = j
+            continue
         # digit-by-digit runs of native single digits (പൂജ്യം പൂജ്യം ഏഴ് -> 007)
         if t.kind == "ml" and t.core in _d.ONES and not t.sfx:
             j = i
