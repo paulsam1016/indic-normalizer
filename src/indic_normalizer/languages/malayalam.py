@@ -640,6 +640,7 @@ def _hold_lone_one(text: str) -> str:
         prev = cores[i - 1] if i > 0 else ""
         nxt = cores[i + 1] if i + 1 < len(cores) else ""
         if (_is_numberish(prev) or _is_numberish(nxt) or nxt in _UNIT_EXACT
+                or prev in ("ഡബിൾ", "ട്രിപ്പിൾ")                 # ഡബിൾ ഒന്ന് -> 11
                 or nxt.startswith(_UNIT_PREFIXES)):
             continue
         toks[i] = toks[i].replace(c, _ONE_HOLD if c == "ഒന്ന്" else _ONEU_HOLD, 1)
