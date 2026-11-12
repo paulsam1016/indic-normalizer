@@ -86,6 +86,9 @@ Applied identically to reference and hypothesis:
 - Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins;
   in a mostly-English sentence digits are spelled out in English instead (`I worked 24 hours` →
   `i worked twenty four hours`), so they meet a spoken `twenty four hours`
+- currency signs and percent become words in eval, in the sentence's language: `₹500` →
+  `അഞ്ഞൂറ് രൂപ` (`five hundred rupees` in an English sentence), `$24` → `ഇരുപത്തിനാല് ഡോളർ`,
+  `20%` → `ഇരുപത് ശതമാനം` / `twenty percent` (train and inference keep the sign)
 - English number words, in Malayalam script (`ട്വൻറ്റി ഫോർ`) or Latin script (`twenty four`),
   are left as written in eval / train; inference mode reads them as digits (`→ 24`)
 - lowercase (code-mixed English), whitespace collapse

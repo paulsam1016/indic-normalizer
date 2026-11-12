@@ -77,3 +77,36 @@ def test_eval_english_digit_words():
     assert ml("I worked 24 hours", mixed=False) == "i worked ഇരുപത്തിനാല് hours"
     assert ml("I worked 24 hours", mixed={"en": False}) == "i worked ഇരുപത്തിനാല് hours"
     assert ml("I worked twenty four hours", itn=True) == "i worked 24 hours"
+
+
+# --- eval: currency signs and percent become words, in the sentence's language ---------------
+@pytest.mark.parametrize("ref, hyp", [
+    ("₹500", "അഞ്ഞൂറ് രൂപ"),
+    ("ഞാൻ ₹500 കൊടുത്തു", "ഞാൻ അഞ്ഞൂറ് രൂപ കൊടുത്തു"),
+    ("ഞാൻ Rs.500 കൊടുത്തു", "ഞാൻ 500 രൂപ കൊടുത്തു"),
+    ("500₹", "അഞ്ഞൂറ് രൂപ"),
+    ("₹ 70,000", "എഴുപതിനായിരം രൂപ"),
+    ("ഞാൻ $24 കൊടുത്തു", "ഞാൻ ഇരുപത്തിനാല് ഡോളർ കൊടുത്തു"),
+    ("ഞാൻ 20% കൊടുത്തു", "ഞാൻ ഇരുപത് ശതമാനം കൊടുത്തു"),
+    ("ഞാൻ 20 % കൊടുത്തു", "ഞാൻ 20 ശതമാനം കൊടുത്തു"),
+    ("I paid ₹500", "I paid five hundred rupees"),
+    ("It costs $24.", "It costs twenty four dollars."),
+    ("That is $1 only", "That is one dollar only"),            # singular for 1
+    ("€10 ticket", "ten euros ticket"),
+    ("I got 20% off", "I got twenty percent off"),
+    ("ഞാൻ ₹500 കൊടുത്തു. I paid 20% tax.", "ഞാൻ അഞ്ഞൂറ് രൂപ കൊടുത്തു. I paid twenty percent tax."),
+])
+def test_eval_signs_meet_spoken_words(ref, hyp):
+    assert ml(ref) == ml(hyp)
+    assert ml(ref, itn=True) == ml(hyp, itn=True)               # also when scoring in digits
+
+
+def test_signs_details():
+    assert ml("ഞാൻ ₹500 കൊടുത്തു") == "ഞാൻ അഞ്ഞൂറ് രൂപ കൊടുത്ത്"
+    assert ml("I got 20% off") == "i got twenty percent off"
+    assert ml("ഞാൻ 20% കൊടുത്തു", itn=True) == "ഞാൻ 20 ശതമാനം കൊടുത്ത്"
+    assert ml("ഞാൻ ₹ കൊടുത്തു") == "ഞാൻ കൊടുത്ത്"                # a lone sign is dropped
+    assert ml("hours 500") == "hours five hundred"              # rs only as a word of its own
+    assert ml("ഞാൻ ₹500 കൊടുത്തു", mode="train") == "ഞാൻ ₹500 കൊടുത്തു"        # train keeps the sign
+    assert ml("ഞാൻ 20% കൊടുത്തു", mode="inference") == "ഞാൻ 20% കൊടുത്തു"
+    assert ml("version 2.0.1") == "version two zero one"         # a dot inside a number ends no sentence

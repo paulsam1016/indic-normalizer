@@ -40,8 +40,8 @@ class EnglishOptions:
 class English:
     """English in Latin script. Inference: number words -> digits (english_itn). Eval: digits in a
     mostly-English sentence are spelled out in English (I worked 24 hours -> twenty four hours),
-    so they meet a spoken "twenty four hours"; digits in other sentences are left to the main
-    language."""
+    so they meet a spoken "twenty four hours", and a currency sign becomes its English word
+    (₹500 -> five hundred rupees); other sentences are left to the main language."""
 
     name = "en"
     Options = EnglishOptions
@@ -50,7 +50,8 @@ class English:
         from .languages.english_itn import itn
         return itn(text, spell_small=opts.spell_small, unit_word=unit_word)
 
-    _SENTENCE = re.compile(r"[^.!?।॥\n]*(?:[.!?।॥\n]+|$)")
+    # a sentence ends at . ! ? । ॥ followed by a space or the end (not inside 2.5 / 2.0.1), or a newline
+    _SENTENCE = re.compile(r".*?(?:[.!?।॥]+(?=\s|$)|\n|$)", re.S)
     _DIGITS = re.compile(r"[0-9]+")
 
     @staticmethod
@@ -61,15 +62,24 @@ class English:
             return f" {latin.digits(s)} "
         return f" {latin.words(int(s))} "
 
-    def verbalize(self, text: str, opts: EnglishOptions) -> str:
+    def _per_english_sentence(self, text: str, fn) -> str:
         from .digits import latin
         out = []
         for m in self._SENTENCE.finditer(text):
             seg = m.group(0)
-            if seg and latin.is_english(seg):
-                seg = self._DIGITS.sub(self._words, seg)
-            out.append(seg)
+            out.append(fn(seg) if seg and latin.is_english(seg) else seg)
         return "".join(out)
+
+    def verbalize(self, text: str, opts: EnglishOptions) -> str:
+        return self._per_english_sentence(text, lambda seg: self._DIGITS.sub(self._words, seg))
+
+    CURRENCY = {"inr": ("rupee", "rupees"), "usd": ("dollar", "dollars"), "eur": ("euro", "euros"),
+                "gbp": ("pound", "pounds"), "pct": ("percent", "percent")}
+
+    def currency(self, text: str, opts: EnglishOptions) -> str:
+        """Eval: ₹500 / $24 / 20% in an English sentence -> 500 rupees / 24 dollars / 20 percent."""
+        from .base import currency_to_words
+        return self._per_english_sentence(text, lambda seg: currency_to_words(seg, self.CURRENCY))
 
 
 HANDLERS = {"en": English()}
@@ -112,6 +122,14 @@ def itn(text: str, active: Dict[str, object], unit_word: UnitWord = None) -> str
     """Inference ITN of every active handler (after the main language's own ITN)."""
     for name, opts in active.items():
         text = HANDLERS[name].itn(text, opts, unit_word)
+    return text
+
+
+def currency(text: str, active: Dict[str, object]) -> str:
+    """Eval: currency sign + amount in sentences of an active handler's language -> amount +
+    that language's currency word (before the main language rewrites the rest)."""
+    for name, opts in active.items():
+        text = HANDLERS[name].currency(text, opts)
     return text
 
 

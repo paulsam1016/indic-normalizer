@@ -420,6 +420,15 @@ def _to_digits(text: str, spell_small: bool = False, mixed=True) -> str:
     return _mixed.itn(itn(text), _mixed.resolve(mixed, spell_small), unit_word=_is_unit_token)
 
 
+def _signs_to_words(text: str, active) -> str:
+    """Eval E15: currency sign / percent with an amount -> amount + word in the sentence's
+    language (code-mixed handlers first, then the main language); a lone sign is dropped."""
+    from .. import mixed as _mixed
+    text = _mixed.currency(text, active)
+    text = base.currency_to_words(text, _CURRENCY_ML)
+    return base.CURRENCY_SIGN.sub(" ", text)
+
+
 def _itn_pass(text: str, active) -> str:
     """Main + code-mixed ITN with the lone-ഒന്ന് guard (I1) around it."""
     from .. import mixed as _mixed
@@ -443,6 +452,9 @@ def _is_unit_token(tok: str) -> bool:
 # 12,50,000) -> one digit run, BEFORE _PUNCT splits it. A list like "1,2,3" is not a grouping.
 _GROUP_COMMA = base.GROUP_COMMA
 _drop_group_commas = base.drop_group_commas
+# E15 (eval): currency words for a sign + amount in a Malayalam sentence (no plural form).
+_CURRENCY_ML = {"inr": ("രൂപ", "രൂപ"), "usd": ("ഡോളർ", "ഡോളർ"), "eur": ("യൂറോ", "യൂറോ"),
+                "gbp": ("പൗണ്ട്", "പൗണ്ട്"), "pct": ("ശതമാനം", "ശതമാനം")}
 _EN_UNIT = {"സീറോ": 0, "വൺ": 1, "ത്രീ": 3, "ഫൈവ്": 5, "സിക്സ്": 6, "സെവൻ": 7,
             "എയ്റ്റ്": 8, "എയിറ്റ്": 8, "നൈൻ": 9}
 _EN_TEEN = {"ടെൻ": 10, "ഇലവൻ": 11, "ഇലെവൻ": 11, "ട്വെൽവ്": 12, "ട്വൽവ്": 12,
@@ -692,8 +704,10 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
         if segmentation:
             text = _join_intra_word_hyphen(text)       # W4:  e-mail -> email (BEFORE E5 eats the hyphen)
         if mode == "eval":                             # numbers: BEFORE E5 (sentence + run boundaries)
-            if itn:
+            text = _signs_to_words(text, active)       # E15: ₹500 / $24 / 20% -> 500 രൂപ / 24 ഡോളർ / 20 ശതമാനം
+            if itn:                                    #      (rupees / dollars / percent in an English sentence)
                 text = _drop_group_commas(_itn_pass(text, active))   # eval ITN: score in digits
+                text = _signs_to_words(text, active)   #      ITN writes 20%: 20 ശതമാനം again
             else:
                 text = _mixed.verbalize(text, active)  # code-mixed: English sentence digits -> English words
         text = base.join_apostrophes(text)             # E14: it's -> its, can't -> cant (not "it s")

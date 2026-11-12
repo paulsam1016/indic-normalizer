@@ -107,6 +107,31 @@ def fold_digits(text: str) -> str:
     return "".join(out)
 
 
+# A currency sign with its amount (eval): ₹500 / Rs. 500 / INR 500 / $24 / €10 / £5, and 500₹.
+# Group commas are already dropped (E7) when this runs.
+_AMOUNT = r"(\d+(?:\.\d+)?)"
+CURRENCY_BEFORE = re.compile(r"(?i)(?<![\w.])(₹|rs\.?|inr|\$|€|£)\s?" + _AMOUNT + r"(?![\d.]*\d)")
+CURRENCY_AFTER = re.compile(_AMOUNT + r"\s?₹(?!\w)")
+CURRENCY_SIGN = re.compile("[₹€£¥]")             # a sign left without an amount
+PERCENT_SIGN = re.compile(_AMOUNT + r"\s?%")      # 20% / 2.5 % (eval: -> 20 percent-word)
+CURRENCY_KEY = {"₹": "inr", "rs": "inr", "rs.": "inr", "inr": "inr", "$": "usd", "€": "eur", "£": "gbp"}
+
+
+def currency_to_words(text: str, names: dict) -> str:
+    """Sign + amount -> amount + word, for eval (both sides then meet a spoken "500 രൂപ" /
+    "500 rupees" / "20 ശതമാനം"). ``names[key]`` is (singular, plural) for key inr / usd / eur /
+    gbp, and pct for a percent sign; the singular is used for an amount of exactly 1."""
+    def word(key, amount):
+        one, many = names[key]
+        return one if amount in ("1", "1.0", "1.00") else many
+
+    text = CURRENCY_BEFORE.sub(lambda m: f"{m.group(2)} {word(CURRENCY_KEY[m.group(1).lower()], m.group(2))}", text)
+    text = CURRENCY_AFTER.sub(lambda m: f"{m.group(1)} {word('inr', m.group(1))}", text)
+    if "pct" in names:                                 # 20% -> 20 ശതമാനം / 20 percent
+        text = PERCENT_SIGN.sub(lambda m: f"{m.group(1)} {names['pct'][1]} ", text)
+    return text
+
+
 def join_apostrophes(text: str) -> str:
     """it's -> its, can't -> cant: an apostrophe inside a Latin word is removed, not spaced."""
     return WORD_APOSTROPHE.sub("", text)

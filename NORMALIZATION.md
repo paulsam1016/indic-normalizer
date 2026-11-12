@@ -198,6 +198,7 @@ no letters goes to the main language. `mixed=False` restores Malayalam words eve
 | E7 digit-grouping comma (`70,000`, `1,75,000`→`175000`) | ✓ | ✓ | ✓ |
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
 | **E14 apostrophe inside a Latin word** (`it's`→`its`, `can't`→`cant`; not `it s`) | join | join | **keep** |
+| **E15 currency sign / percent** (`₹500`, `Rs.500`, `500₹`, `$24`, `€10`, `£5`, `20%`) | → amount + word in the sentence's language (`500 രൂപ` / `500 rupees`, `24 ഡോളർ` / `24 dollars`, `20 ശതമാനം` / `20 percent`), then E8 | — (kept for the external verbalizer) | — (kept) |
 | **E5 punctuation removal** | strip | strip | **keep** |
 | **E9 English-number words** (Malayalam or Latin script) | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
 | **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit); in a mostly-English sentence → **English words** (code-mixed handler); left as digits with `itn=True` | — (left as digits) | — (left as digits) |
