@@ -30,9 +30,14 @@ pip install -e ".[dev]"
 from indic_normalizer import get_normalizer, normalize
 
 # Explicit language (recommended for scoring — you know the benchmark language):
-fn, source = get_normalizer("ml")        # aliases: ml / mal / malayalam
-fn("ട്വൻറ്റി ഫോർ")                        # -> 'ഇരുപത്തിനാല്'
-fn("24") == fn("ട്വൻറ്റി ഫോർ") == fn("ഇരുപത്തിനാല്")   # True
+fn, source = get_normalizer("ml")        # aliases: ml / mal / malayalam; mode="eval" (default)
+fn("24 രൂപ.")                             # -> 'ഇരുപത്തിനാല് രൂപ'
+fn("24") == fn("ഇരുപത്തിനാല്")            # True: digits meet number words
+
+# Reader-facing output: punctuation + case kept, number words -> digits (ITN):
+infer, _ = get_normalizer("ml", mode="inference")
+infer("ട്വൻറ്റി ഫോർ പേർ, ഇരുനൂറ്റമ്പത് രൂപ!")   # -> '24 പേർ, 250 രൂപ!'
+normalize("ഇരുപത്തിനാല് പേർ!", lang="ml", mode="inference", itn=False)  # -> 'ഇരുപത്തിനാല് പേർ!'
 
 # One-shot:
 normalize("ഇ–മെയിൽ", lang="ml")
@@ -45,8 +50,12 @@ script_of("ഇതൊരു")                       # -> 'ml'
 
 `get_normalizer(lang)` returns `(normalize_fn, source_label)`. A language with a dedicated
 normalizer (Malayalam today) uses it; everything else falls back to the language-agnostic
-**universal** normalizer (NFC, punctuation/zero-width/`⁇` removal, digit-fold, lowercase,
-whitespace collapse).
+**universal** normalizer (NFC, punctuation/zero-width/`⁇` removal, digit-fold, digit-grouping
+commas, lowercase, whitespace collapse).
+
+Modes: `eval` (default; WER/CER scoring), `train` (training targets: numbers left as written)
+and `inference` (reader-facing: punctuation and case kept, number words → digits; pass
+`itn=False` to keep number words as written). See NORMALIZATION.md "Mode selector".
 
 ## What the Malayalam normalizer does
 
@@ -58,12 +67,14 @@ Applied identically to reference and hypothesis:
   indic-nlp-library's normaliser, identical behaviour; see [Third-party code](#third-party-code))
 - Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal
 - Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins
-- **English↔Malayalam number canonicalization** (`ട്വൻറ്റി ഫോർ`/`24`/`ഇരുപത്തിനാല്` all
-  collapse to one form)
+- English-style number words in Malayalam script (`ട്വൻറ്റി ഫോർ`) are left as written in
+  eval / train; inference mode reads them as digits (`→ 24`)
 - lowercase (code-mixed English), whitespace collapse
 
 Number words to digits only, with no punctuation, case or other changes (the ITN step of
-`mode="inference"` on its own):
+`mode="inference"` on its own). Digits said one by one become one number when they look like a
+code (4+ digits, a zero, or `ഡബിൾ`/`ട്രിപ്പിൾ`: phones, OTPs, `007`); shorter runs stay separate
+digits (`രണ്ട് മൂന്ന് പേർ` → `2 3 പേർ`, "two or three people"):
 
 ```python
 from indic_normalizer.languages.malayalam import itn_numbers

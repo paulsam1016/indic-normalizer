@@ -12,13 +12,14 @@ Usage
     from indic_normalizer import get_normalizer, normalize
 
     fn, source = get_normalizer("ml")               # Malayalam, eval mode (default)
-    fn("ട്വൻറ്റി ഫോർ")                                # -> 'ഇരുപത്തിനാല്'
+    fn("24 രൂപ.")                                    # -> 'ഇരുപത്തിനാല് രൂപ'
 
     fn, _ = get_normalizer("ml", mode="inference")  # reader-facing ITN
     fn("ഇരുപത്തിനാല് രൂപ")                            # -> '24 രൂപ'
 
     normalize("ഇ–മെയിൽ", lang="ml")                  # one-shot, eval
     normalize("24 രൂപ.", lang="ml", mode="inference")# one-shot, ITN -> '24 രൂപ.'
+    normalize("ഇരുപത്തിനാല്!", lang="ml", mode="inference", itn=False)  # -> 'ഇരുപത്തിനാല്!'
     normalize("hello, world")                        # no lang -> universal normalizer
 
 `get_normalizer(lang, mode)` returns ``(normalize_fn, source_label)``. A language with a
@@ -26,7 +27,7 @@ dedicated normalizer (e.g. Malayalam) uses it; everything else falls back to the
 language-agnostic ``universal`` normalizer. ``mode`` is "eval" (default; WER/CER
 scoring — numbers verbalized to native words), "train" (aliases "training", "fine-tune"; same but numbers
 left as written) or "inference" (reader-facing ITN: number words -> digits, punctuation + case
-preserved). See NORMALIZATION.md "Mode selector".
+preserved; ``itn=False`` keeps number words as written). See NORMALIZATION.md "Mode selector".
 
 Adding a language: drop ``languages/<lang>.py`` (exposing ``normalize(text, mode)``) and
 register its aliases in ``registry._ALIASES`` + a branch in ``registry._load``.
