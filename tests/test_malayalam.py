@@ -497,3 +497,16 @@ def test_itn_v2_digits_roundtrip_native():
         assert _itn.itn(_ml.words(n)) == _itn._fmt(n), n
         if n not in (2, 4):                                   # lone ടു / ഫോർ = "to" / "for"
             assert _itn.itn(_ml.en_words(n)) == _itn._fmt(n), n
+
+
+# --- colon guard: a colon next to a Malayalam DIGIT is a time, not a visarga --------------
+@pytest.mark.parametrize("mode, expected", [
+    ("eval", "സമയം പത്ത് മുപ്പത് ആണ്"),
+    ("train", "സമയം 10:30 ആണ്"),
+    ("inference", "സമയം 10:30 ആണ്"),
+])
+def test_malayalam_digit_time_keeps_colon(mode, expected):
+    from indic_normalizer import normalize
+    assert normalize("സമയം ൧൦:൩൦ ആണ്", lang="ml", mode=mode) == expected
+    assert normalize("സമയം 10:30 ആണ്", lang="ml", mode=mode) == expected
+    assert normalize("ദു:ഖം", lang="ml", mode=mode) == "ദുഃഖം"     # in-word colon still -> ഃ

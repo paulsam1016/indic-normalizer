@@ -320,7 +320,6 @@ _ONE2DIGIT = {w: str(i) for i, w in enumerate(_ONES)}
 # non-number remainder — which is kept as the suffix. Guarded so a token that does NOT begin
 # with a number unit (ഫ്രണ്ടിൽ "front", ആയിരിക്കും "will be") is never touched.
 _SIGN2VOWEL = {v: k for k, v in _V_SIGN.items() if v}   # vowel-sign -> independent vowel
-_ORDINAL_SUFFIX = re.compile("^ാ(?:ം|മ)")               # ordinal ആം / ആമത്(തെ|ായി...)
 _VSIGNS = set("ാിീുൂൃെേൈൊോൌ")                            # dependent vowel signs
 
 
@@ -396,16 +395,6 @@ def _parse_leading_number(core: str) -> "tuple[int, int] | None":
     return (total, i) if matched else None
 
 
-def _unglide(s: str) -> str:
-    """Restore a suffix's leading independent vowel if it was written as the glide യ(+sign)."""
-    if s.startswith("യ"):
-        rest = s[1:]
-        if rest and rest[0] in _SIGN2VOWEL:
-            return _SIGN2VOWEL[rest[0]] + rest[1:]
-        return "അ" + rest
-    return s
-
-
 # Peel leading/trailing punctuation off a token so a number word adjacent to punctuation
 # (e.g. "ഇരുപത്തിനാല്," or "(ഏഴ്)") still matches. Inference keeps punctuation, so the
 # number passes must look at the token's CORE and reattach the surrounding punctuation.
@@ -421,52 +410,6 @@ def _peel(tok: str):
     return lead, core, trail
 
 
-def _itn_digit_by_digit(tokens: list) -> list:
-    """Collapse a run of >=2 consecutive single-digit ONES words (by CORE) into one digit
-    string (reverses the id-like path: 'പൂജ്യം പൂജ്യം ഏഴ്' -> '007'). A run is only fused
-    when the interior tokens carry no punctuation, so '..., ഏഴ്' doesn't glue across commas."""
-    cores = [_peel(t) for t in tokens]
-    out, i, n = [], 0, len(tokens)
-    while i < n:
-        j = i
-        while j < n and cores[j][1] in _ONE2DIGIT:
-            j += 1
-        run = tokens[i:j]
-        if len(run) >= 2:
-            digits = "".join(_ONE2DIGIT[cores[k][1]] for k in range(i, j))
-            out.append(cores[i][0] + digits + cores[j - 1][2])   # keep outer punctuation
-            i = j
-        else:
-            out.append(tokens[i]); i += 1
-    return out
-
-
-def _itn_token(tok: str) -> str:
-    """One token -> digits; surrounding punctuation preserved. A pure numeral becomes digits
-    (ഇരുപത്തിനാല് -> 24); a numeral fused with a suffix becomes ``digits-suffix`` (നാലാം ->
-    4-ാം, മുപ്പത്തിയല്ലേ -> 30-അല്ലേ); a token that doesn't start with a number is unchanged."""
-    lead, core, trail = _peel(tok)
-    if not core:
-        return tok
-    r = _parse_leading_number(core)
-    if r is None:
-        return tok
-    value, consumed = r
-    suffix = _unglide(core[consumed:])
-    # The numeral spoken with its own -u ending (രണ്ടു, ആറു, പത്തു) is just the number.
-    if suffix in ("ു", "ു" + _VIRAMA):
-        suffix = ""
-    # ORDINALS ONLY: a fused suffix is converted only when it is the ordinal ആം family
-    # (ാം / ാമത് / ാമത്തെ / ാമതായി ...): പത്താം -> 10-ാം, രണ്ടാമത്തെ -> 2-ാമത്തെ.
-    # Any other fusion is a word, not a numeral, and is left untouched — measured on the
-    # corpus, numeral-prefix idioms dominate: ഒന്നും "anything/nothing", രണ്ടും "both",
-    # ഒന്നിച്ച് "together", ഒന്നുകിൽ "either", രണ്ടുമൂന്ന് "two or three".
-    if suffix and not _ORDINAL_SUFFIX.match(suffix):
-        return tok
-    body = str(value) + ("-" + suffix if suffix else "")
-    return lead + body + trail
-
-
 def _to_digits(text: str) -> str:
     """ITN: number words (native in every spelling, English in Malayalam script) -> digits.
     The inference pass; see malayalam_itn (built by inverting the digits module's readings)."""
@@ -479,11 +422,8 @@ def _to_digits(text: str) -> str:
 # variants collected from real base-model output. --------------------------------------
 # Digit-group commas, Western (70,000 / 1,000,000) AND Indian lakh grouping (1,75,000 /
 # 12,50,000) -> one digit run, BEFORE _PUNCT splits it. A list like "1,2,3" is not a grouping.
-_GROUP_COMMA = re.compile(r"(?<![\d,])\d{1,3}(?:(?:,\d{2})*,\d{3}|(?:,\d{3})+)(?!,?\d)")
-
-
-def _drop_group_commas(text: str) -> str:
-    return _GROUP_COMMA.sub(lambda m: m.group(0).replace(",", ""), text)
+_GROUP_COMMA = base.GROUP_COMMA
+_drop_group_commas = base.drop_group_commas
 _EN_UNIT = {"സീറോ": 0, "വൺ": 1, "ത്രീ": 3, "ഫൈവ്": 5, "സിക്സ്": 6, "സെവൻ": 7,
             "എയ്റ്റ്": 8, "എയിറ്റ്": 8, "നൈൻ": 9}
 _EN_TEEN = {"ടെൻ": 10, "ഇലവൻ": 11, "ഇലെവൻ": 11, "ട്വെൽവ്": 12, "ട്വൽവ്": 12,
@@ -591,22 +531,8 @@ INDIC_NLP_AVAILABLE = True
 #   train     — training / fine-tune targets: same canonicalization as eval but numbers are
 #               NOT rewritten (digit verbalization is done outside this library).
 #   inference — reader-facing ITN: keep punctuation and case, number words -> digits.
-_EVAL_MODES = {"eval", "evaluation"}
-_TRAIN_MODES = {"train", "training", "fine-tune", "finetune"}
-_INFER_MODES = {"inference", "infer", "itn"}
-
-
-def _resolve_mode(mode) -> str:
-    m = str(mode or "eval").strip().lower()
-    if m in _INFER_MODES:
-        return "inference"
-    if m in _EVAL_MODES:
-        return "eval"
-    if m in _TRAIN_MODES:
-        return "train"
-    raise ValueError(
-        f"unknown mode {mode!r}; use 'eval', 'train' (aliases: training, fine-tune) or 'inference'"
-    )
+_EVAL_MODES, _TRAIN_MODES, _INFER_MODES = base.EVAL_MODES, base.TRAIN_MODES, base.INFER_MODES
+_resolve_mode = base.resolve_mode
 
 
 # I1 (inference): a standalone ഒന്ന്/ഒന്നു is far more often the softener "just / once"
@@ -654,7 +580,8 @@ def _hold_lone_one(text: str) -> str:
 # followed by a space / end / non-letter is punctuation (ആണ്: ..., പറ:) and must stay ':' —
 # eval then strips it, inference keeps it. Such colons are swapped for a private-use placeholder
 # around the indic-nlp call so it cannot touch them.
-_COLON_PUNCT = re.compile(r":(?![\u0d00-\u0d7f])")
+# A colon next to a Malayalam DIGIT is held too: ൧൦:൩൦ is a time, not a visarga.
+_COLON_PUNCT = re.compile(r"(?<=[\u0d66-\u0d6f]):|:(?![\u0d00-\u0d65\u0d70-\u0d7f])")
 
 # E13: bracketed annotation tags in references (<unintelligible>, <noise>, <laugh> ...). E5 would
 # strip the brackets and leave the tag NAME as a spoken word; drop the whole tag instead.

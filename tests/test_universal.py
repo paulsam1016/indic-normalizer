@@ -69,3 +69,17 @@ def test_indic_vowel_signs_preserved():
 
 def test_danda_removed():
     assert "।" not in normalize("वाक्य ।")
+
+
+def test_invisible_chars():
+    assert normalize("a​b") == "a b"                       # zero-width space = word break
+    assert normalize("a­b") == normalize("ab") == "ab"      # soft hyphen
+    assert normalize("a⁠b") == "ab"                         # word joiner
+    assert normalize("﻿ab￾") == "ab"
+
+
+def test_group_commas():
+    assert normalize("1,000 रुपये") == normalize("1000 रुपये") == "1000 रुपये"
+    assert normalize("1,75,000") == "175000"                     # Indian lakh grouping
+    assert normalize("1,2,3") == "1 2 3"                         # a list, not a number
+    assert normalize("1,000", mode="inference") == "1,000"       # reader-facing: as written

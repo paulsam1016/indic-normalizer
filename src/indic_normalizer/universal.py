@@ -5,11 +5,13 @@ hypotheses compare fairly without favouring any one script or convention:
 
   * Unicode NFC — one canonical codepoint sequence per grapheme;
   * ``<unk>`` / ``⁇`` marker removal;
-  * zero-width formatting char removal (ZWNJ, ZWJ, BOM);
+  * invisible formatting char removal (ZWNJ, ZWJ, BOM, word joiner, soft hyphen; a zero-width
+    space becomes a space);
   * punctuation & symbol removal — ASCII **and** Indic danda ``।`` / ``॥``, quotes,
     dashes, etc. (an explicit set, NOT a Unicode Mark/Symbol category — that would
     delete Indic vowel signs and the virama; see NORMALIZATION.md);
-  * any Unicode decimal digit → ASCII 0-9;
+  * any Unicode decimal digit → ASCII 0-9, and (eval/train) digit-grouping commas dropped
+    (``70,000`` / ``1,75,000`` → one number);
   * lowercase (English casing; a no-op for the case-less Indic scripts);
   * whitespace collapse.
 
@@ -22,23 +24,9 @@ from . import base
 
 # Three modes (see NORMALIZATION.md "Mode selector"): eval, train, inference. The universal
 # normalizer has no number rules, so eval and train behave identically here; mode only
-# governs punctuation removal (E5) and lowercasing (E10), which inference keeps.
-_EVAL_MODES = {"eval", "evaluation"}
-_TRAIN_MODES = {"train", "training", "fine-tune", "finetune"}
-_INFER_MODES = {"inference", "infer", "itn"}
-
-
-def _resolve_mode(mode) -> str:
-    m = str(mode or "eval").strip().lower()
-    if m in _INFER_MODES:
-        return "inference"
-    if m in _EVAL_MODES:
-        return "eval"
-    if m in _TRAIN_MODES:
-        return "train"
-    raise ValueError(
-        f"unknown mode {mode!r}; use 'eval', 'train' (aliases: training, fine-tune) or 'inference'"
-    )
+# governs group-comma and punctuation removal (E7, E5) and lowercasing (E10), which inference
+# keeps.
+_resolve_mode = base.resolve_mode
 
 
 def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
@@ -56,6 +44,7 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
     text = base.strip_zero_width(text)
     text = base.fold_digits(text)
     if mode in ("eval", "train"):
+        text = base.drop_group_commas(text)  # E7: 1,000 -> 1000 (BEFORE E5 splits it)
         text = base.strip_punct(text)     # E5
         text = text.lower()               # E10
     return base.collapse_space(text)
