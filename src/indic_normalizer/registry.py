@@ -43,14 +43,20 @@ def _load(code):
     return None
 
 
-def get_normalizer(lang=None, mode="eval", segmentation=False, itn=True):
+def get_normalizer(lang=None, mode="eval", segmentation=False, itn=None, spell_small=None, mixed=True):
     """``(normalize_fn, source)`` for ``lang``/``mode``; universal normalizer as fallback.
 
-    ``normalize_fn`` is ``fn(text)`` with ``mode``, ``segmentation`` and ``itn`` bound. ``mode`` is
+    ``normalize_fn`` is ``fn(text)`` with ``mode``, ``segmentation``, ``itn``, ``spell_small`` and
+    ``mixed`` bound. ``mode`` is
     validated eagerly here (so a bad mode fails at ``get_normalizer`` time, not on first
     call), then bound via ``functools.partial``. ``segmentation`` (eval-only, default OFF)
-    turns on the W3/W4/W5 boundary rules for languages that have them. ``itn`` (inference-only,
-    default ON) turns number words into digits; False keeps them as written. The C1/C2/C6 CER
+    turns on the W3/W4/W5 boundary rules for languages that have them. ``itn`` (default None =
+    the mode's default: on in inference, off in eval) turns number words into digits; in eval,
+    True scores in digits instead of words. ``mixed`` (default True) controls the code-mixed
+    handlers (``indic_normalizer.mixed``: English in Latin script); False leaves other scripts
+    to the shared steps, a dict sets per-handler options. ``spell_small`` is a shortcut for
+    ``mixed={"en": {"spell_small": ...}}`` (English style for lone small Latin-script numbers:
+    "I have five" stays; off: "I have 5"). The C1/C2/C6 CER
     folds run automatically in eval mode (no flag).
     """
     base_fn, source = universal.normalize, "indic_normalizer.universal"
@@ -59,11 +65,14 @@ def get_normalizer(lang=None, mode="eval", segmentation=False, itn=True):
         loaded = _load(code)
         if loaded is not None:
             base_fn, source = loaded
-    # Validate the mode up front using the target module's resolver.
+    # Validate the mode and the code-mixed options up front (fail here, not on the first call).
     module = base_fn.__module__
     import importlib
+    from . import mixed as _mixed
     importlib.import_module(module)._resolve_mode(mode)
-    return partial(base_fn, mode=mode, segmentation=segmentation, itn=itn), source
+    _mixed.resolve(mixed, spell_small)
+    return partial(base_fn, mode=mode, segmentation=segmentation, itn=itn, spell_small=spell_small,
+                   mixed=mixed), source
 
 
 # --- optional: Unicode-block script detection (script routing, NOT language ID) ------

@@ -39,15 +39,19 @@ from .registry import get_normalizer, script_of
 __version__ = "0.2.0"
 
 
-def normalize(text, lang=None, mode="eval", segmentation=False, itn=True):
+def normalize(text, lang=None, mode="eval", segmentation=False, itn=None, spell_small=None, mixed=True):
     """One-shot normalize ``text`` for ``lang``/``mode`` (universal normalizer if no lang).
 
     ``segmentation`` (eval-only, default OFF) enables the W3/W4/W5 boundary rules. ``itn``
-    (inference-only, default ON): False keeps number words as written (punctuation + case
-    still preserved). The
-    C2/C6 CER folds run in every mode; C1 in eval only.
+    (default None = the mode's default: on in inference, off in eval): inference False keeps
+    number words as written; eval True scores in digits instead of words. ``mixed`` (default
+    True): code-mixed handlers for other scripts (``indic_normalizer.mixed``); False leaves them
+    to the shared steps, a dict sets options. ``spell_small``: shortcut for
+    ``mixed={"en": {"spell_small": ...}}`` ("I have five" stays; off: "I have 5"). The C2/C6
+    CER folds run in every mode; C1 in eval only.
     """
-    fn, _ = get_normalizer(lang, mode=mode, segmentation=segmentation, itn=itn)
+    fn, _ = get_normalizer(lang, mode=mode, segmentation=segmentation, itn=itn, spell_small=spell_small,
+                           mixed=mixed)
     return fn(text)
 
 

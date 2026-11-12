@@ -88,8 +88,8 @@ from indic_normalizer.languages.malayalam import itn_numbers
     ("", ""),
 ])
 def test_english_itn(text, expected):
-    assert itn(text) == expected
-    assert itn_numbers(text) == expected
+    assert itn(text, spell_small=False) == expected
+    assert itn_numbers(text) == expected                # the pipeline default is spell_small=False
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -100,7 +100,22 @@ def test_english_itn(text, expected):
     ("twenty four", "24"),
 ])
 def test_spell_small_english_style(text, expected):
+    assert itn(text) == expected                        # english_itn.itn default: English style
     assert itn(text, spell_small=True) == expected
+    assert itn_numbers(text, spell_small=True) == expected
+    assert normalize(text, lang="ml", mode="inference", spell_small=True) == expected
+
+
+def test_spell_small_through_the_api():
+    from indic_normalizer import get_normalizer
+    text = "I have five, ഫൈവ് and five മിനിറ്റ്"
+    on, _ = get_normalizer("ml", mode="inference", spell_small=True)
+    off, _ = get_normalizer("ml", mode="inference")
+    # Malayalam-script ഫൈവ് is not affected; a Malayalam unit word is context either way
+    assert on(text) == "I have five, 5 and 5 മിനിറ്റ്"
+    assert off(text) == "I have 5, 5 and 5 മിനിറ്റ്"
+    assert normalize(text, lang="ml", mode="eval", spell_small=True) == normalize(text, lang="ml")
+    assert normalize("I have five", mode="inference", spell_small=True) == "I have five"   # universal
 
 
 def test_code_mixed_with_malayalam():

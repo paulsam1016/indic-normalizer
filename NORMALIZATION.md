@@ -168,6 +168,14 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
 
 A shared **canonicalization base** runs identically in all three modes.
 
+**Main language vs code-mixed.** Normalization is for the language in `lang` (the *main*
+language); other scripts in the text are *code-mixed*. Steps fall in three tiers: shared
+(script-agnostic, `base.py`), main (the `lang` rules, for everything in its script — including
+English loanwords in Malayalam script, `ട്വന്റി ഫോർ`) and code-mixed (one handler per other
+script, `mixed.py`; today English in Latin script). The main normalizer calls the handlers at the
+right step and gives them its context (its unit words: `five മിനിറ്റ്`→`5 മിനിറ്റ്`). `mixed=False`
+leaves other scripts to the shared steps; `mixed={"en": {...}}` sets a handler's options.
+
 | Step | `eval` | `train` | `inference` |
 |------|--------|------------|-------------|
 | E12 chillu-conjunct fix (`ൻ്റ`→`ന്റ`) | ✓ | ✓ | ✓ |
@@ -182,8 +190,8 @@ A shared **canonicalization base** runs identically in all three modes.
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
 | **E5 punctuation removal** | strip | strip | **keep** |
 | **E9 English-number words** (Malayalam or Latin script) | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
-| **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit) | — (left as digits) | — (left as digits) |
-| **ITN number words → digits** | — | — | **✓** (`malayalam_itn`; off with `itn=False`; 1–9 + suffix stays words except ordinals; lone `ഒന്ന്` only in numeric context) |
+| **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit); left as digits with `itn=True` | — (left as digits) | — (left as digits) |
+| **ITN number words → digits** | opt-in (`itn=True`: score in digits) | — | **✓** (`malayalam_itn` + code-mixed handlers; off with `itn=False`; 1–9 + suffix stays words except ordinals; lone `ഒന്ന്` only in numeric context) |
 | **E10 lowercase** | ✓ | ✓ | **keep case** |
 | **C1 samvruthokaram fold** (`നാലു`→`നാല്`) | ✓ | — (target keeps real spelling) | — (would strip a real `-u` for a reader) |
 | W3/W4/W5 segmentation (`segmentation=True`, default off) | opt-in | opt-in | — |
@@ -233,8 +241,9 @@ Differences that come from the script: a lone Latin `one` (also a pronoun) needs
 like `ഒന്ന്` (`one day`→`1 day`, `one of them` stays); Latin `two` / `four` are never "to" /
 "for" (`ടു` / `ഫോർ` are); `twenty second` is 22nd in Latin but `ട്വന്റി സെക്കൻഡ്` is 20 seconds
 (Malayalam script has no plural). A Malayalam unit word is number context for an English number
-(`five മിനിറ്റ്`→`5 മിനിറ്റ്`). Currency words stay words. `english_itn.itn(..., spell_small=True)`
-gives English style instead (every lone zero–nine stays a word). Ported from the stt service's
+(`five മിനിറ്റ്`→`5 മിനിറ്റ്`). Currency words stay words. `spell_small=True` (on `normalize`,
+`get_normalizer`, `itn_numbers`; the default of `english_itn.itn` on its own) gives English style
+for Latin script: every lone zero–nine and small ordinal stays a word unless a unit follows. Ported from the stt service's
 English ITN, with the parser rewritten to match.
 
 `<unk>`/`⁇` is stripped in every mode; inference could instead map it to a marker such as `[?]`

@@ -24,8 +24,11 @@ or it ends a range ("one of them", but "one day" -> 1 day); a lone "first" / "se
 / "for" are never numbers (Latin spells "two" / "four" differently, unlike ടു / ഫോർ), currency
 words stay words ("ten dollars" -> 10 dollars), and digits already in the text are left alone.
 
-``spell_small=True`` follows English style instead: every lone zero..nine (and lone small ordinal)
-stays a word unless a unit follows. The default (False) matches the Malayalam ITN.
+``spell_small`` (default True here, as in the stt service): English style, where a lone zero..nine
+(and a lone small ordinal) stays a word unless a unit follows ("I have five", "the third time").
+False reads them like the Malayalam ITN ("I have 5", "the 3rd time"); that is what
+``normalize(..., mode="inference")`` and ``itn_numbers`` use unless they are passed
+``spell_small=True``. The examples above are with spell_small=False.
 
 Started from the stt service's ``en_itn``; the parser was rewritten to match the Malayalam ITN.
 """
@@ -269,7 +272,7 @@ def _digit_string(w: List[str]) -> Optional[Tuple[str, int]]:
     return ("".join(out) if repeated or fuse_digits(out) else " ".join(out)), i
 
 
-def itn_tokens(tokens: List[str], *, spell_small: bool = False,
+def itn_tokens(tokens: List[str], *, spell_small: bool = True,
                unit_word: Optional[Callable[[str], bool]] = None) -> List[str]:
     """Rewrite a token list; punctuation glued to a token is kept around the result. Tokens that
     are not English number words (Malayalam, digits, other words) are returned as they are.
@@ -381,7 +384,7 @@ def itn_tokens(tokens: List[str], *, spell_small: bool = False,
     return out
 
 
-def itn(text: str, *, spell_small: bool = False,
+def itn(text: str, *, spell_small: bool = True,
         unit_word: Optional[Callable[[str], bool]] = None) -> str:
     """English number words (Latin script) in ``text`` -> digits; everything else as is."""
     return " ".join(itn_tokens((text or "").split(), spell_small=spell_small, unit_word=unit_word))

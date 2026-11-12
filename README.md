@@ -54,8 +54,24 @@ normalizer (Malayalam today) uses it; everything else falls back to the language
 commas, lowercase, whitespace collapse).
 
 Modes: `eval` (default; WER/CER scoring), `train` (training targets: numbers left as written)
-and `inference` (reader-facing: punctuation and case kept, number words → digits; pass
-`itn=False` to keep number words as written). See NORMALIZATION.md "Mode selector".
+and `inference` (reader-facing: punctuation and case kept, number words → digits). See
+NORMALIZATION.md "Mode selector".
+
+- `itn` — number words → digits. Default: on in `inference`, off in `eval` (eval scores numbers
+  as words: `24` → `ഇരുപത്തിനാല്`). `itn=False` in inference keeps number words as written;
+  `itn=True` in eval scores in digits instead (`ഇരുപത്തിനാല് പേർ` and `24 പേർ` both → `24 പേർ`).
+  No effect in `train`.
+- `mixed` — normalization is for the language in `lang`; other scripts in the text are code-mixed
+  and get their own handlers (`indic_normalizer.mixed`; today English in Latin script). `True`
+  (default) runs them, `False` leaves other scripts to the shared steps only, and a dict sets
+  options per handler: `mixed={"en": {"spell_small": True}}`, or `{"en": False}` to turn one off.
+- `spell_small=True` — shortcut for `mixed={"en": {"spell_small": True}}` (English-style small
+  numbers, below).
+
+```python
+normalize("ഇരുപത്തിനാല് പേർ", lang="ml", itn=True)                  # eval in digits -> '24 പേർ'
+normalize("twenty four people", lang="ml", mode="inference", mixed=False)   # -> 'twenty four people'
+```
 
 ## What the Malayalam normalizer does
 
@@ -88,8 +104,14 @@ and `thousand six hundred` and `തൗസന്റ് സിക്സ് ഹൺ�
 `a hundred`, years (`nineteen ninety five` → `1995`), hyphenated forms and `one o clock` →
 `1 O’Clock`. Ambiguous pairs (`twelve thirty`: a time or a price) stay words. A lone `one` (also a
 pronoun) needs number context such as a unit word (`one day` → `1 day`, `one of them` stays);
-`to` / `for` are never numbers; currency words stay words (`ten dollars` → `10 dollars`). Pass
-`spell_small=True` to `english_itn.itn` for English style (every lone zero–nine stays a word).
+`to` / `for` are never numbers; currency words stay words (`ten dollars` → `10 dollars`).
+
+Lone small numbers in Latin-script English (zero–nine or a small ordinal with no unit after it)
+convert by default, like the Malayalam side (`I have five` → `I have 5`, `the third time` →
+`the 3rd time`). Pass `spell_small=True` to `normalize`, `get_normalizer` or `itn_numbers` for
+English style, where they stay words (`I have five`, `the third time`; `five days` → `5 days`
+either way). Malayalam-script number words are not affected. `english_itn.itn` used on its own
+defaults to `spell_small=True`, as in the stt service.
 
 ## Digits module (`indic_normalizer.digits`)
 
