@@ -168,6 +168,13 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
 
 A shared **canonicalization base** runs identically in all three modes.
 
+**Read before removing.** A special character often carries meaning (a group comma says
+Indian or Western grouping, `:` a time, `-ന്` a case suffix, `.` a decimal, `%`, `₹`), so every
+step that removes one runs only after what it carries has been read: eval reads numbers,
+currency and percent first (E15, E16, E8 for English sentences) and only then drops group commas
+(E7) and punctuation (E5); train keeps number punctuation and grouping for the external
+verbalizer (T1); inference keeps them all.
+
 **Main language vs code-mixed.** Normalization is for the language in `lang` (the *main*
 language); other scripts in the text are *code-mixed*. Steps fall in three tiers: shared
 (script-agnostic, `base.py`), main (the `lang` rules, for everything in its script — including
@@ -195,11 +202,11 @@ no letters goes to the main language. `mixed=False` restores Malayalam words eve
 | C6 homoglyph `ഠ`→`0` inside a number | ✓ | ✓ | ✓ |
 | T2 AU length mark `ൌ`→`ൗ` (undo indic-nlp) | — | ✓ | — |
 | C2 word-final `മ്`→`ം` | ✓ | ✓ (not after a virama) | ✓ |
-| E7 digit-grouping comma (`70,000`, `1,75,000`→`175000`) | ✓ | ✓ | ✓ |
+| E7 digit-grouping comma (`70,000`, `1,75,000`) | dropped **after** the number is read with its grouping (`2,000,000` in an English sentence → `two million`, `1,00,000` → `one lakh`) | **kept** (`1,75,000`: the external verbalizer sees the grouping) | **kept** (digits as written) |
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
 | **E14 apostrophe inside a Latin word** (`it's`→`its`, `can't`→`cant`; not `it s`) | join | join | **keep** |
 | **E15 currency sign / percent** (`₹500`, `Rs.500`, `500₹`, `$24`, `€10`, `£5`, `20%`) | → amount + word in the sentence's language (`500 രൂപ` / `500 rupees`, `24 ഡോളർ` / `24 dollars`, `20 ശതമാനം` / `20 percent`), then E8 | — (kept for the external verbalizer) | — (kept) |
-| **E16 decimals / ordinals / times** | → the digits module's first reading (`2.5`→`രണ്ടര`, `3.14`→`മൂന്ന് പോയിന്റ് ഒന്ന് നാല്`, `21st`→`ഇരുപത്തൊന്നാം`, `4:30`→`നാലര`, `11:00`→`പതിനൊന്ന് മണി`); English sentences: every number (`two point five`, `twenty first`, `four oh five`, `nineteen ninety five`) | — | — |
+| **E16 numbers with special characters** (decimal, ordinal, time, time range, range, date, fraction / slash, number + suffix, `+`, codes) | → the digits module's first reading, glide style as E8, **before** E5 removes the characters (`2.5`→`രണ്ടര`, `21st`→`ഇരുപത്തിയൊന്നാം`, `4:30-ന്`→`നാലരയ്ക്ക്`, `40-ന്റെ`→`നാൽപ്പതിന്റെ`, `4:00-5:00`→`നാല് മണി അഞ്ച് മണി`, `1/2`→`അര`, `3+2`→`മൂന്ന് പ്ലസ് രണ്ട്`); English sentences: every number (`two point five`, `twenty first`, `four oh five`, `nineteen ninety five`, `2,000,000`→`two million`) | — | — |
 | **E17 English canonical forms** (code-mixed English; all of `lang="en"`) | contractions expanded (`can't`/`cannot`→`can not`, `it's`→`it is`, `it's been`→`it has been`, `gonna`→`going to`), fillers `um`/`uh`/`hmm`/`mm` dropped (`uh huh`, `mhm` kept), `OK`→`okay`, `&`→`and` (English sentences) | — (as said) | — |
 | **E5 punctuation removal** | strip | strip | **keep** |
 | **E9 English-number words** (Malayalam or Latin script) | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |

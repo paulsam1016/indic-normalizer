@@ -45,8 +45,12 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
     text = base.strip_zero_width(text)
     text = base.fold_digits(text)
     if mode in ("eval", "train"):
-        text = base.drop_group_commas(text)  # E7: 1,000 -> 1000 (BEFORE E5 splits it)
+        if mode == "eval":
+            text = base.drop_group_commas(text)   # E7: 1,000 -> 1000 (BEFORE E5 splits it)
+        else:
+            text = base.hold_group_commas(text)   # train: 70,000 kept for the external verbalizer
         text = base.join_apostrophes(text)   # E14: it's -> its (BEFORE E5 splits it)
         text = base.strip_punct(text)     # E5
+        text = base.restore_group_commas(text)
         text = text.lower()               # E10
     return base.collapse_space(text)

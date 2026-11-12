@@ -81,6 +81,10 @@ Applied identically to reference and hypothesis:
   this**)
 - chillu / ZWJ-ZWNJ canonicalization, two-part vowel signs, colon→visarga (a built-in port of
   indic-nlp-library's normaliser, identical behaviour; see [Third-party code](#third-party-code))
+- numbers are read **before** their special characters are removed: grouping (`2,000,000` in
+  an English sentence → `two million`, `1,00,000` → `one lakh`), number + suffix (`40-ന്റെ` →
+  `നാൽപ്പതിന്റെ`), times, ranges, dates, fractions (`1/2` → `അര`); train and inference keep
+  group commas as written (`1,75,000`)
 - Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal; an
   apostrophe inside a Latin word joins it (`it's` → `its`, `can't` → `cant`, not `it s`)
 - Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins;

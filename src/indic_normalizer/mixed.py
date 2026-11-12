@@ -53,6 +53,7 @@ _CONTRACTIONS = [(re.compile(p, re.I), r) for p, r in (
     (rf"\b([a-z]+){_A}ve\b", r"\1 have"), (rf"\bi{_A}m\b", "i am"),
     (rf"\b([a-z]+){_A}d\b", r"\1 would"),
     (r"\bgonna\b", "going to"), (r"\bwanna\b", "want to"), (r"\bgotta\b", "got to"),
+    (rf"\bo{_A}?clock\b", "o clock"),                   # o'clock / oclock: as 10:00 is read
 )]
 # um / uh / hmm / mm (and longer spellings) are hesitations; "uh huh" (yes) and "mhm" are kept
 _FILLER = re.compile(r"(?i)\b(?:u+m+|u+h+|h+m+|m{2,})\b(?![\s-]+huh\b)")

@@ -420,7 +420,10 @@ def _to_digits(text: str, spell_small: bool = False, mixed=True) -> str:
     return _mixed.itn(itn(text), _mixed.resolve(mixed, spell_small), unit_word=_is_unit_token)
 
 
-_SPECIAL = ("decimal", "ordinal", "time")
+# every class whose special characters carry meaning (a plain integer, a grouped number and a
+# year have none: E8 reads them after E7)
+_SPECIAL = ("decimal", "ordinal", "time", "time_range", "range", "date", "slash", "num_suffix",
+            "alnum", "operator", "other")
 
 
 def _spell_special(text: str) -> str:
@@ -432,7 +435,7 @@ def _spell_special(text: str) -> str:
     spans = [sp for sp in find(text) if sp.cls in _SPECIAL]
     solo = alone(text)
     for sp in reversed(spans):
-        c = candidates(sp, next_word=next_word(text, sp), alone=solo)
+        c = candidates(sp, style="glide", next_word=next_word(text, sp), alone=solo)   # glide, as E8
         if c:
             text = f"{text[:sp.start]} {c[0].text} {text[sp.end:]}"
     return text
@@ -661,7 +664,8 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
     left as written (no ITN) unless itn=True.
     mode="train" (aliases "training", "fine-tune") — training targets: like eval, but numbers
     are NOT rewritten (digit verbalization is handled outside this library), punctuation inside
-    a number is kept for that verbalizer (4:00-5:00, 2.5, 70%, 23-ന്, 8-9), the C1 fold is off
+    a number is kept for that verbalizer (4:00-5:00, 2.5, 70%, 23-ന്, 8-9, and group commas:
+    1,75,000 / 2,000,000, so it can see the grouping), the C1 fold is off
     (targets keep their real spelling) and <tags> are left to the data pipeline.
     mode="inference" — reader-facing ITN: keep punctuation and case; number words -> digits
     (ഇരുപത്തിനാല് -> 24, ട്വൻറ്റി ഫോർ -> 24, twenty four -> 24, നാലാം -> 4-ാം); existing digits
@@ -712,13 +716,15 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
         text = _fold_final_nasal_train(text)      # C2:  word-final മ് -> ം, not after a virama
     else:
         text = _fold_final_nasal(text)            # C2:  word-final മ് -> ം
-    text = _drop_group_commas(text)               # E7:  70,000 / 1,75,000 -> one digit run (all modes)
+    # E7 (group commas) is NOT done here: the grouping is read first (eval), kept for the external
+    # verbalizer (train) or left as written (inference).
     if mode != "train":
         text = _TAG.sub(" ", text)                # E13: <unintelligible>-style tags (eval + inference)
 
     if mode in ("eval", "train"):
         if mode == "train":
             text = _protect_num_punct(text)            # T1:  4:00-5:00, 2.5, 70%, 23-ന്, 8-9 survive E5
+            text = base.hold_group_commas(text)        # T1:  70,000 / 1,00,000 / 100,000 too (grouping)
         if segmentation:
             text = _join_intra_word_hyphen(text)       # W4:  e-mail -> email (BEFORE E5 eats the hyphen)
         if mode == "eval":                             # numbers: BEFORE E5 (sentence + run boundaries)
@@ -729,11 +735,13 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
                 text = _signs_to_words(text, active)   #      ITN writes 20%: 20 ശതമാനം again
             else:
                 text = _mixed.verbalize(text, active)  # code-mixed: English sentence numbers -> English words
-                text = _spell_special(text)            # E16: 2.5 / 21st / 4:30 -> the digits module's reading
+                                                       #      (2,000,000 -> two million: grouping read first)
+                text = _spell_special(text)            # E16: 2.5 / 21st / 4:30 / 23-ന് / 4:00-5:00 / 12/05/2024
+            text = _drop_group_commas(text)            # E7:  70,000 / 1,75,000 -> one digit run (for E8)
         text = base.join_apostrophes(text)             # E14: it's -> its, can't -> cant (not "it s")
         text = _PUNCT.sub(" ", text)                   # E5:  strip punctuation
         if mode == "train":
-            text = text.translate(_NUM_PUNCT_RESTORE)
+            text = base.restore_group_commas(text.translate(_NUM_PUNCT_RESTORE))
         if mode == "eval" and not itn:                 # E8 (eval only; train leaves digits)
             text = _NUM_RE.sub(_verbalize_digits, text)  #      digits -> native words (24 -> ഇരുപത്തിനാല്)
         text = text.lower()                            # E10: lowercase
