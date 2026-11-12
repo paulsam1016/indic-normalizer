@@ -411,10 +411,19 @@ def _peel(tok: str):
 
 
 def _to_digits(text: str) -> str:
-    """ITN: number words (native in every spelling, English in Malayalam script) -> digits.
-    The inference pass; see malayalam_itn (built by inverting the digits module's readings)."""
+    """ITN: number words -> digits: native in every spelling and English in Malayalam script
+    (malayalam_itn, built by inverting the digits module's readings), then English in Latin
+    script (english_itn). Each pass leaves the other script's words alone."""
+    from .english_itn import itn as en_itn
     from .malayalam_itn import itn
-    return itn(text)
+    return en_itn(itn(text), unit_word=_is_unit_token)
+
+
+def _is_unit_token(tok: str) -> bool:
+    """A Malayalam unit / counter word (രൂപ, ദിവസം, മിനിറ്റ്, ഡേ ...): numeric context for an
+    English number word before it (five മിനിറ്റ് -> 5 മിനിറ്റ്)."""
+    core = _peel(tok)[1]
+    return bool(core) and (core in _UNIT_EXACT or core.startswith(_UNIT_PREFIXES))
 
 
 # --- English-style number words (Malayalam script, as base models write code-mixed

@@ -67,8 +67,8 @@ Applied identically to reference and hypothesis:
   indic-nlp-library's normaliser, identical behaviour; see [Third-party code](#third-party-code))
 - Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal
 - Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins
-- English-style number words in Malayalam script (`ട്വൻറ്റി ഫോർ`) are left as written in
-  eval / train; inference mode reads them as digits (`→ 24`)
+- English number words, in Malayalam script (`ട്വൻറ്റി ഫോർ`) or Latin script (`twenty four`),
+  are left as written in eval / train; inference mode reads them as digits (`→ 24`)
 - lowercase (code-mixed English), whitespace collapse
 
 Number words to digits only, with no punctuation, case or other changes (the ITN step of
@@ -79,7 +79,17 @@ digits (`രണ്ട് മൂന്ന് പേർ` → `2 3 പേർ`, "two
 ```python
 from indic_normalizer.languages.malayalam import itn_numbers
 itn_numbers("ഇരുനൂറ്റമ്പത് രൂപ, ഒന്ന് നോക്ക്!")   # -> '250 രൂപ, ഒന്ന് നോക്ക്!'
+itn_numbers("ഞാൻ twenty four hours ജോലി ചെയ്തു")    # -> 'ഞാൻ 24 hours ജോലി ചെയ്തു'
 ```
+
+Latin-script English (`indic_normalizer.languages.english_itn`, also usable on its own) follows
+the same rules as Malayalam-script English, so `two lakh` and `ടൂ ലാക്` both give `2,00,000`,
+and `thousand six hundred` and `തൗസന്റ് സിക്സ് ഹൺഡ്രഡ്` both give `1600`. It also reads `and`,
+`a hundred`, years (`nineteen ninety five` → `1995`), hyphenated forms and `one o clock` →
+`1 O’Clock`. Ambiguous pairs (`twelve thirty`: a time or a price) stay words. A lone `one` (also a
+pronoun) needs number context such as a unit word (`one day` → `1 day`, `one of them` stays);
+`to` / `for` are never numbers; currency words stay words (`ten dollars` → `10 dollars`). Pass
+`spell_small=True` to `english_itn.itn` for English style (every lone zero–nine stays a word).
 
 ## Digits module (`indic_normalizer.digits`)
 

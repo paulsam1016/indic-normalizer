@@ -69,6 +69,20 @@ def strip_zero_width(text: str) -> str:
     return ZERO_WIDTH.sub("", text.replace(ZWSP, " "))
 
 
+def indian_grouping(n: int) -> str:
+    """How ITN writes a whole number: plain below one lakh (1000, 50000), Indian grouping from
+    one lakh up (1,00,000 / 1,20,000 / 1,00,00,000)."""
+    s = str(n)
+    if n < 100_000:
+        return s
+    head, tail = s[:-3], s[-3:]
+    groups = []
+    while len(head) > 2:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    return ",".join([head] + groups + [tail])
+
+
 def drop_group_commas(text: str) -> str:
     """70,000 / 1,75,000 -> 70000 / 175000 (a 1,2,3 list is untouched)."""
     return GROUP_COMMA.sub(lambda m: m.group(0).replace(",", ""), text)

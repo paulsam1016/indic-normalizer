@@ -181,7 +181,7 @@ A shared **canonicalization base** runs identically in all three modes.
 | E7 digit-grouping comma (`70,000`, `1,75,000`→`175000`) | ✓ | ✓ | ✓ |
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
 | **E5 punctuation removal** | strip | strip | **keep** |
-| **E9 English-number words** | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
+| **E9 English-number words** (Malayalam or Latin script) | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
 | **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit) | — (left as digits) | — (left as digits) |
 | **ITN number words → digits** | — | — | **✓** (`malayalam_itn`; off with `itn=False`; 1–9 + suffix stays words except ordinals; lone `ഒന്ന്` only in numeric context) |
 | **E10 lowercase** | ✓ | ✓ | **keep case** |
@@ -218,6 +218,24 @@ is "two or three people" (`2 3 പേർ`, not `23`) and `ഒന്ന് രണ
 ITN also reads spellings the generator does not write (it follows one spelling policy):
 `ഒൻപത്`/`അൻപത്` and their compounds, `നാല്പത്`/`നാൽപത്`, `എമ്പത്`, `ഇരുന്നൂറ്`, and `ടൂ` as two
 beside a number word. A bare `ലാക്`/`ക്രോർ` with no count stays a word.
+
+**English in Latin script** (`english_itn`, run after the Malayalam-script pass; each leaves the
+other script alone) follows the same rules as the Malayalam-script English reading; a test reads
+the digits module's Latin and Malayalam-script spellings of the same numbers back and checks
+they agree. Both read: bare `hundred` / `thousand` as one (`thousand six hundred`→`1600`), a
+repeated scale as a new number (`10000 15000`), the k form (`20k`), digit strings with zero said
+as `oh` / `ഓ` (`four oh five`→`405`, `double oh seven`→`007`), and years (`nineteen ninety
+five` / `നൈന്റീൻ നൈന്റി ഫൈവ്`→`1995`, first part fifteen–nineteen or twenty). In both, two
+adjacent numbers below 100 that do not combine (`twelve thirty` / `ട്വൽവ് തേർട്ടി`: a time, a
+price or a range) stay words. Latin also reads `and` (`one hundred and five`→`105`), `a hundred`,
+hyphenated forms (`twenty-five thousand`→`25000`) and o'clock (`one o clock`→`1 O’Clock`).
+Differences that come from the script: a lone Latin `one` (also a pronoun) needs number context,
+like `ഒന്ന്` (`one day`→`1 day`, `one of them` stays); Latin `two` / `four` are never "to" /
+"for" (`ടു` / `ഫോർ` are); `twenty second` is 22nd in Latin but `ട്വന്റി സെക്കൻഡ്` is 20 seconds
+(Malayalam script has no plural). A Malayalam unit word is number context for an English number
+(`five മിനിറ്റ്`→`5 മിനിറ്റ്`). Currency words stay words. `english_itn.itn(..., spell_small=True)`
+gives English style instead (every lone zero–nine stays a word). Ported from the stt service's
+English ITN, with the parser rewritten to match.
 
 `<unk>`/`⁇` is stripped in every mode; inference could instead map it to a marker such as `[?]`
 if model uncertainty should be shown to the reader — an open option, not implemented.

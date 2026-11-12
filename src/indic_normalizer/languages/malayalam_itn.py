@@ -25,6 +25,7 @@ import re
 from functools import lru_cache
 from typing import List, Optional, Tuple
 
+from ..base import indian_grouping as _indian   # shared with english_itn
 from ..digits import ml as _d
 from . import malayalam as _m
 
@@ -315,18 +316,6 @@ def _clean_between(toks, i, j) -> bool:
 
 # ------------------------------------------------------------------------------ rendering
 
-def _indian(n: int) -> str:
-    s = str(n)
-    if n < 100_000:
-        return s
-    head, tail = s[:-3], s[-3:]
-    groups = []
-    while len(head) > 2:
-        groups.insert(0, head[-2:])
-        head = head[:-2]
-    return ",".join([head] + groups + [tail])
-
-
 def _fmt(v) -> str:
     if isinstance(v, float):
         if v.is_integer():
@@ -399,13 +388,24 @@ def _native(toks, i):
     return end, total, ""
 
 
+def _zero_o(toks, i, j) -> bool:
+    """toks[j] is ഓ / ഒ said as zero: between two English number words, the second a digit
+    (നൈന്റീൻ ഓ ഫൈവ് 1905, ഫോർ ഓ ഫൈവ് 405). Elsewhere ഓ is a word (ഓ ശരി, ഓ ക്ലോക്ക്)."""
+    if j <= i or j + 1 >= len(toks) or toks[j].core not in EN_ZERO_O or toks[j].sfx:
+        return False
+    a, b = toks[j - 1], toks[j + 1]
+    return (a.kind == "en" and a.info[1] in ("unit", "ambig", "teen", "ten")
+            and b.kind == "en" and b.info[1] in ("unit", "ambig") and b.info[2] > 0
+            and not toks[j].lead and not toks[j].trail and not b.lead and not a.trail)
+
+
 def _english(toks, i):
     """A run of English number words at i: (end, rendered) or None. Needs one unambiguous word
-    (a lone ടു / ഫോർ is "to" / "for")."""
+    (a lone ടു / ഫോർ is "to" / "for"). rendered is None when the run must stay words."""
     j = i
     if toks[i].core in EN_REPEAT:
         return None                                           # ഡബിൾ ടെൻ: words (see _repeat_run)
-    while j < len(toks) and (toks[j].kind == "en" or toks[j].core == EN_K) \
+    while j < len(toks) and (toks[j].kind == "en" or toks[j].core == EN_K or _zero_o(toks, i, j)) \
             and (j == i or not toks[j].lead) and (j == i or not toks[j - 1].trail):
         j += 1
         if toks[j - 1].sfx or (toks[j - 1].kind == "en" and toks[j - 1].info[1] == "ord"):
@@ -420,21 +420,26 @@ def _english(toks, i):
                     or nxt in POINT and j + 1 < len(toks) and _digit_word(toks[j + 1]) is not None
                     or nxt == "ഓ" and j + 1 < len(toks) and toks[j + 1].core.startswith("ക്ലോക്ക"))
     numeric_next = numeric_next or any(t.core == EN_K for t in run[1:])   # ടു കെ -> 2k
-    if not run or not (numeric_next or any(t.kind == "en" and t.info[1] != "ambig" for t in run)):
+    has_o = any(t.core in EN_ZERO_O and t.kind is None for t in run)
+    if not run or not (numeric_next or has_o or any(t.kind == "en" and t.info[1] != "ambig" for t in run)):
         return None                                           # a lone ടു / ഫോർ is "to" / "for"
+    if has_o and len(run) == 3 and run[0].info[1] in ("teen", "ten") and (
+            15 <= run[0].info[2] <= 19 or run[0].info[2] == 20):
+        return j, str(run[0].info[2] * 100 + run[2].info[2])  # നൈന്റീൻ ഓ ഫൈവ് -> 1905
     if run[0].core == EN_K or (len(run) == 1 and run[0].kind == "en" and run[0].info[1] == "ord"
                                and run[0].core in ORD_LONE_NO):
         return None
     if all(t.kind == "en" and t.info[1] == "mult" and t.info[2] >= 100_000 for t in run):
         return None                                           # a bare ലാക് / ക്രോർ: no count, a word
-    # digit by digit (codes, phone numbers): units / to / for / double / triple only
-    if len(run) >= 2 and all(t.core in EN_REPEAT or t.kind == "en" and t.info[1] in ("unit", "ambig") for t in run):
+    # digit by digit (codes, phone numbers): units / to / for / double / triple / ഓ (zero) only
+    if len(run) >= 2 and all(t.core in EN_REPEAT or t.kind == "en" and t.info[1] in ("unit", "ambig")
+                             or t.core in EN_ZERO_O and t.kind is None for t in run):
         out, rep, used = [], 1, False
         for t in run:
             if t.core in EN_REPEAT:
                 rep, used = EN_REPEAT[t.core], True
                 continue
-            out.append(str(t.info[2]) * rep)
+            out.append(("0" if t.kind is None else str(t.info[2])) * rep)
             rep = 1
         sfx = run[-1].sfx
         body = "".join(out) if used or _fuse_digits(out) else " ".join(out)
@@ -457,6 +462,9 @@ def _english(toks, i):
 
     for t in run:
         if t.core in EN_REPEAT:
+            continue
+        if t.kind is None and t.core in EN_ZERO_O:            # a ഓ that is no year / digit string
+            flush()
             continue
         if t.core == EN_K:
             k_flag = True
@@ -503,6 +511,12 @@ def _english(toks, i):
     if not nums:
         return None
     sfx = run[-1].sfx
+    if len(nums) == 2 and all(x.isdigit() for x in nums):
+        a, b = int(nums[0]), int(nums[1])
+        if (15 <= a <= 19 or a == 20) and 10 <= b <= 99 and not (a == b == 20):
+            nums = [str(a * 100 + b)]                         # നൈന്റീൻ നൈന്റി ഫൈവ് -> 1995
+        elif a < 100 and b < 100 and not sfx:
+            return j, None                                    # ട്വൽവ് തേർട്ടി: time / price / range: words
     return j, " ".join(nums) + ("-" + _show_suffix(sfx) if sfx else "")
 
 
@@ -578,6 +592,10 @@ def itn(text: str) -> str:
         en = _english(toks, i) if (t.kind == "en" or t.core in EN_REPEAT) else None
         if en:
             j, body = en
+            if body is None:                                  # an ambiguous pair: all words
+                out += [x.raw for x in toks[i:j]]
+                i = j
+                continue
             j, body = _modifiers(toks, i, j, body, None)
             out.append(t.lead + body + toks[j - 1].trail)
             i = j
