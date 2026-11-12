@@ -3,11 +3,11 @@
 Two layers:
 - pinned outputs, which need nothing extra and always run;
 - an equivalence check against the real indic-nlp-library 0.92
-  (IndicNormalizerFactory().get_normalizer("ml")), which skips unless the `dev` extra
-  (indic-nlp-library) is installed.
+  (IndicNormalizerFactory().get_normalizer("ml")), through outputs recorded from it in
+  tests/data/indicnlp_092_ml.json (no indic-nlp install needed).
 """
 
-import ast
+import json
 import pathlib
 import unicodedata
 
@@ -77,26 +77,21 @@ def test_colon_guard_still_applies_in_normalize():
     assert ml.normalize("ദു:ഖം", mode="inference") == "ദുഃഖം"
 
 
-# --- equivalence with the real indic-nlp-library ---------------------------------------------
-def _existing_malayalam_strings() -> list[str]:
-    """Every string literal containing Malayalam in this test suite's files."""
-    out = set()
-    for p in pathlib.Path(__file__).parent.glob("test_*.py"):
-        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
-            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
-                    and any("ഀ" <= c <= "ൿ" for c in node.value)):
-                out.add(node.value)
-    return sorted(out)
+# --- equivalence with the real indic-nlp-library 0.92 ---------------------------------------
+# tests/data/indicnlp_092_ml.json records the real library's output for the edge cases above and
+# every Malayalam string literal in the source and tests, each raw / NFC / NFD. It was generated
+# with tests/data/make_indicnlp_fixture.py, so the suite needs no indic-nlp-library install.
+FIXTURE = pathlib.Path(__file__).parent / "data" / "indicnlp_092_ml.json"
 
 
-def test_equivalent_to_indic_nlp_library():
-    factory = pytest.importorskip("indicnlp.normalize.indic_normalize").IndicNormalizerFactory
-    ref = factory().get_normalizer("ml")
-    texts = EDGE_CASES + _existing_malayalam_strings()
-    assert len(texts) > 100
-    diffs = []
-    for t in texts:
-        for v in {t, unicodedata.normalize("NFC", t), unicodedata.normalize("NFD", t)}:
-            if port.normalize(v) != ref.normalize(v):
-                diffs.append((v, port.normalize(v), ref.normalize(v)))
+def test_equivalent_to_indic_nlp_library_092():
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert data["indic_nlp_library"] == "0.92"
+    pairs = data["pairs"]
+    assert len(pairs) > 1000
+    recorded = {inp for inp, _ in pairs}
+    for t in EDGE_CASES:                                  # the edge cases are all in the fixture
+        for v in (t, unicodedata.normalize("NFC", t), unicodedata.normalize("NFD", t)):
+            assert v in recorded, v
+    diffs = [(inp, port.normalize(inp), out) for inp, out in pairs if port.normalize(inp) != out]
     assert not diffs, diffs[:10]

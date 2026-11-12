@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install with the dev extra
+        run: python -m pip install -e ".[dev]"
+      - name: Test
+        run: python -m pytest -q
+
+  no-runtime-deps:
+    # The package promises no runtime dependencies (consumers pin it from git into lean images).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: A bare install pulls in nothing else
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --dry-run --report report.json .
+          python - <<'PY'
+          import json
+          names = [i["metadata"]["name"] for i in json.load(open("report.json"))["install"]]
+          print("would install:", names)
+          assert names == ["indic-normalizer"], names
+          PY
+      - name: Import works without indic-nlp-library
+        run: |
+          python -m pip install .
+          cd /tmp
+          python -c "from indic_normalizer import get_normalizer; fn, _ = get_normalizer('ml'); print(fn('24'))"
+          python -c "import importlib.util as u; assert u.find_spec('indicnlp') is None"

@@ -1,7 +1,6 @@
 import itertools
 import re
 
-import pytest
 
 from indic_normalizer.digits import candidates, find, latin, ml, verbalize
 from indic_normalizer.languages.malayalam import normalize

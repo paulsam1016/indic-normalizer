@@ -22,8 +22,10 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# indic-nlp-library is used only by the test that checks the built-in port against it.
-dev = ["pytest>=7", "indic-nlp-library>=0.92"]
+# numpy + PyYAML: the digits-scoring and verifier tests (they skip without them). The built-in
+# indic-nlp port is checked against outputs recorded from indic-nlp-library 0.92 in tests/data,
+# so that library is not needed.
+dev = ["pytest>=7", "numpy>=1.22", "PyYAML>=6"]
 # indic_normalizer.digits audio scoring (RNN-T/CTC choice of number readings). The text-only
 # parts of the digits module (find / candidates / verbalize / stats) need nothing extra.
 # torch + NeMo: the CUDA build of torch is the APPLICATION's choice (its index, its CUDA version) —
@@ -33,8 +35,8 @@ digits = [
     "numpy>=1.22",
     "PyYAML>=6",
     "soundfile>=0.12",
-    "torch==2.12.1",
-    "nemo_toolkit[asr]==3.0.0",
+    "torch>=2.12.1",
+    "nemo_toolkit[asr]>=3.0.0,<4",
     ]
 
 [project.scripts]
