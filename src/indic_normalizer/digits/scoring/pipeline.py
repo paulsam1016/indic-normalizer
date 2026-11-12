@@ -47,7 +47,7 @@ from .audio import find_audio, load_wav, slice_audio
 from .config import ScoringConfig
 from .. import ml
 from ..detect import to_ascii_digits
-from ..latin import is_english as _is_english, sentence_is_english as _sent_english
+from ..latin import is_english as _is_english
 from .. import next_word as _next_word
 from .. import alone as _alone
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "indic-normalizer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Meaning-preserving text normalization for Indic-script ASR scoring (WER/CER), Malayalam-first."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -16,12 +16,16 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Topic :: Text Processing :: Linguistic",
 ]
-# indic-nlp-library is a hard dependency: the Malayalam path relies on it for the full
-# chillu / two-part-vowel / visarga canonicalization (there is no stdlib fallback).
-dependencies = ["indic-nlp-library>=0.92"]
+# No runtime dependencies. The Malayalam chillu / two-part-vowel / visarga canonicalization is a
+# built-in port of indic-nlp-library 0.92's normaliser (src/indic_normalizer/_indicnlp_ml.py,
+# identical behaviour), so indic-nlp and its pandas / sphinx / morfessor chain are not pulled in.
+dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+# numpy + PyYAML: the digits-scoring and verifier tests (they skip without them). The built-in
+# indic-nlp port is checked against outputs recorded from indic-nlp-library 0.92 in tests/data,
+# so that library is not needed.
+dev = ["pytest>=7", "numpy>=1.22", "PyYAML>=6"]
 # indic_normalizer.digits audio scoring (RNN-T/CTC choice of number readings). The text-only
 # parts of the digits module (find / candidates / verbalize / stats) need nothing extra.
 # torch + NeMo: the CUDA build of torch is the APPLICATION's choice (its index, its CUDA version) —
@@ -31,8 +35,8 @@ digits = [
     "numpy>=1.22",
     "PyYAML>=6",
     "soundfile>=0.12",
-    "torch==2.12.1",
-    "nemo_toolkit[asr]==3.0.0",
+    "torch>=2.12.1",
+    "nemo_toolkit[asr]>=3.0.0,<4",
     ]
 
 [project.scripts]

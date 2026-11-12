@@ -3,8 +3,8 @@ Malayalam ASR text normalization for WER/CER scoring.
 
 Applied identically to reference AND hypothesis, so scores aren't inflated by
 convention/encoding differences. normalize() does: mis-encoded chillu-conjunct fix
-(ൻ്റ→ന്റ, NFC-invisible), chillu / ZWJ-ZWNJ canonicalization (via indic-nlp-library, a
-hard dependency), Unicode NFC, <unk>('⁇') + punctuation removal, Indic-digit → ASCII,
+(ൻ്റ→ന്റ, NFC-invisible), chillu / ZWJ-ZWNJ canonicalization (indic-nlp-library's normaliser, built
+in), Unicode NFC, <unk>('⁇') + punctuation removal, Indic-digit → ASCII,
 digit verbalization, English↔Malayalam number canonicalization, lowercase (for
 code-mixed English), the CER folds C6 (homoglyph ഠ→0 in a number) and C2 (word-final മ्→ം) in
 both modes, plus C1 (word-final samvruthokaram ...ു→...്, eval only), and the opt-in
@@ -320,7 +320,6 @@ _ONE2DIGIT = {w: str(i) for i, w in enumerate(_ONES)}
 # non-number remainder — which is kept as the suffix. Guarded so a token that does NOT begin
 # with a number unit (ഫ്രണ്ടിൽ "front", ആയിരിക്കും "will be") is never touched.
 _SIGN2VOWEL = {v: k for k, v in _V_SIGN.items() if v}   # vowel-sign -> independent vowel
-_ORDINAL_SUFFIX = re.compile("^ാ(?:ം|മ)")               # ordinal ആം / ആമത്(തെ|ായി...)
 _VSIGNS = set("ാിീുൂൃെേൈൊോൌ")                            # dependent vowel signs
 
 
@@ -396,16 +395,6 @@ def _parse_leading_number(core: str) -> "tuple[int, int] | None":
     return (total, i) if matched else None
 
 
-def _unglide(s: str) -> str:
-    """Restore a suffix's leading independent vowel if it was written as the glide യ(+sign)."""
-    if s.startswith("യ"):
-        rest = s[1:]
-        if rest and rest[0] in _SIGN2VOWEL:
-            return _SIGN2VOWEL[rest[0]] + rest[1:]
-        return "അ" + rest
-    return s
-
-
 # Peel leading/trailing punctuation off a token so a number word adjacent to punctuation
 # (e.g. "ഇരുപത്തിനാല്," or "(ഏഴ്)") still matches. Inference keeps punctuation, so the
 # number passes must look at the token's CORE and reattach the surrounding punctuation.
@@ -421,57 +410,57 @@ def _peel(tok: str):
     return lead, core, trail
 
 
-def _itn_digit_by_digit(tokens: list) -> list:
-    """Collapse a run of >=2 consecutive single-digit ONES words (by CORE) into one digit
-    string (reverses the id-like path: 'പൂജ്യം പൂജ്യം ഏഴ്' -> '007'). A run is only fused
-    when the interior tokens carry no punctuation, so '..., ഏഴ്' doesn't glue across commas."""
-    cores = [_peel(t) for t in tokens]
-    out, i, n = [], 0, len(tokens)
-    while i < n:
-        j = i
-        while j < n and cores[j][1] in _ONE2DIGIT:
-            j += 1
-        run = tokens[i:j]
-        if len(run) >= 2:
-            digits = "".join(_ONE2DIGIT[cores[k][1]] for k in range(i, j))
-            out.append(cores[i][0] + digits + cores[j - 1][2])   # keep outer punctuation
-            i = j
-        else:
-            out.append(tokens[i]); i += 1
-    return out
-
-
-def _itn_token(tok: str) -> str:
-    """One token -> digits; surrounding punctuation preserved. A pure numeral becomes digits
-    (ഇരുപത്തിനാല് -> 24); a numeral fused with a suffix becomes ``digits-suffix`` (നാലാം ->
-    4-ാം, മുപ്പത്തിയല്ലേ -> 30-അല്ലേ); a token that doesn't start with a number is unchanged."""
-    lead, core, trail = _peel(tok)
-    if not core:
-        return tok
-    r = _parse_leading_number(core)
-    if r is None:
-        return tok
-    value, consumed = r
-    suffix = _unglide(core[consumed:])
-    # The numeral spoken with its own -u ending (രണ്ടു, ആറു, പത്തു) is just the number.
-    if suffix in ("ു", "ു" + _VIRAMA):
-        suffix = ""
-    # ORDINALS ONLY: a fused suffix is converted only when it is the ordinal ആം family
-    # (ാം / ാമത് / ാമത്തെ / ാമതായി ...): പത്താം -> 10-ാം, രണ്ടാമത്തെ -> 2-ാമത്തെ.
-    # Any other fusion is a word, not a numeral, and is left untouched — measured on the
-    # corpus, numeral-prefix idioms dominate: ഒന്നും "anything/nothing", രണ്ടും "both",
-    # ഒന്നിച്ച് "together", ഒന്നുകിൽ "either", രണ്ടുമൂന്ന് "two or three".
-    if suffix and not _ORDINAL_SUFFIX.match(suffix):
-        return tok
-    body = str(value) + ("-" + suffix if suffix else "")
-    return lead + body + trail
-
-
-def _to_digits(text: str) -> str:
-    """ITN: number words (native in every spelling, English in Malayalam script) -> digits.
-    The inference pass; see malayalam_itn (built by inverting the digits module's readings)."""
+def _to_digits(text: str, spell_small: bool = False, mixed=True) -> str:
+    """ITN: number words -> digits. Main language: native in every spelling and English in
+    Malayalam script (malayalam_itn, built by inverting the digits module's readings); then the
+    code-mixed handlers (mixed.py: English in Latin script). Each pass leaves the other script's
+    words alone."""
+    from .. import mixed as _mixed
     from .malayalam_itn import itn
-    return itn(text)
+    return _mixed.itn(itn(text), _mixed.resolve(mixed, spell_small), unit_word=_is_unit_token)
+
+
+_SPECIAL = ("decimal", "ordinal", "time")
+
+
+def _spell_special(text: str) -> str:
+    """Eval E16: decimals, ordinals and times are read the way the digits module writes training
+    targets (its first reading): 2.5 -> രണ്ടര, 3.14 -> മൂന്ന് പോയിന്റ് ഒന്ന് നാല്, 21st ->
+    ഇരുപത്തൊന്നാം, 4:30 -> നാലര. Without this E5 splits them (2.5 -> രണ്ട് അഞ്ച്, 21st ->
+    ഇരുപത്തിയൊന്ന്st). Plain integers are left to E8."""
+    from ..digits import alone, candidates, find, next_word
+    spans = [sp for sp in find(text) if sp.cls in _SPECIAL]
+    solo = alone(text)
+    for sp in reversed(spans):
+        c = candidates(sp, next_word=next_word(text, sp), alone=solo)
+        if c:
+            text = f"{text[:sp.start]} {c[0].text} {text[sp.end:]}"
+    return text
+
+
+def _signs_to_words(text: str, active) -> str:
+    """Eval E15: currency sign / percent with an amount -> amount + word in the sentence's
+    language (code-mixed handlers first, then the main language); a lone sign is dropped."""
+    from .. import mixed as _mixed
+    text = _mixed.currency(text, active)
+    text = base.currency_to_words(text, _CURRENCY_ML)
+    return base.CURRENCY_SIGN.sub(" ", text)
+
+
+def _itn_pass(text: str, active) -> str:
+    """Main + code-mixed ITN with the lone-ഒന്ന് guard (I1) around it."""
+    from .. import mixed as _mixed
+    from .malayalam_itn import itn
+    text = _hold_lone_one(text)                    # I1:  standalone ഒന്ന് = "just/once", not 1
+    text = _mixed.itn(itn(text), active, unit_word=_is_unit_token)
+    return text.replace(_ONE_HOLD, "ഒന്ന്").replace(_ONEU_HOLD, "ഒന്നു")
+
+
+def _is_unit_token(tok: str) -> bool:
+    """A Malayalam unit / counter word (രൂപ, ദിവസം, മിനിറ്റ്, ഡേ ...): numeric context for an
+    English number word before it (five മിനിറ്റ് -> 5 മിനിറ്റ്)."""
+    core = _peel(tok)[1]
+    return bool(core) and (core in _UNIT_EXACT or core.startswith(_UNIT_PREFIXES))
 
 
 # --- English-style number words (Malayalam script, as base models write code-mixed
@@ -479,11 +468,11 @@ def _to_digits(text: str) -> str:
 # variants collected from real base-model output. --------------------------------------
 # Digit-group commas, Western (70,000 / 1,000,000) AND Indian lakh grouping (1,75,000 /
 # 12,50,000) -> one digit run, BEFORE _PUNCT splits it. A list like "1,2,3" is not a grouping.
-_GROUP_COMMA = re.compile(r"(?<![\d,])\d{1,3}(?:(?:,\d{2})*,\d{3}|(?:,\d{3})+)(?!,?\d)")
-
-
-def _drop_group_commas(text: str) -> str:
-    return _GROUP_COMMA.sub(lambda m: m.group(0).replace(",", ""), text)
+_GROUP_COMMA = base.GROUP_COMMA
+_drop_group_commas = base.drop_group_commas
+# E15 (eval): currency words for a sign + amount in a Malayalam sentence (no plural form).
+_CURRENCY_ML = {"inr": ("രൂപ", "രൂപ"), "usd": ("ഡോളർ", "ഡോളർ"), "eur": ("യൂറോ", "യൂറോ"),
+                "gbp": ("പൗണ്ട്", "പൗണ്ട്"), "pct": ("ശതമാനം", "ശതമാനം")}
 _EN_UNIT = {"സീറോ": 0, "വൺ": 1, "ത്രീ": 3, "ഫൈവ്": 5, "സിക്സ്": 6, "സെവൻ": 7,
             "എയ്റ്റ്": 8, "എയിറ്റ്": 8, "നൈൻ": 9}
 _EN_TEEN = {"ടെൻ": 10, "ഇലവൻ": 11, "ഇലെവൻ": 11, "ട്വെൽവ്": 12, "ട്വൽവ്": 12,
@@ -573,11 +562,13 @@ def _canonicalize_en_numbers(text: str) -> str:
     return " ".join(out)
 
 
-# indic-nlp-library is a hard dependency (see pyproject.toml). It canonicalizes chillu /
-# ZWJ, two-part vowel signs, and colon→visarga.
-from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
+# indic-nlp-library's Malayalam normaliser, built in: a port of indic-nlp-library 0.92's
+# IndicNormalizerFactory().get_normalizer("ml") with identical behaviour (see _indicnlp_ml.py),
+# so the package has no runtime dependency on indic-nlp. It canonicalizes chillu / ZWJ,
+# two-part vowel signs, and colon→visarga.
+from .._indicnlp_ml import MalayalamNormalizer
 
-_IND_NORM = IndicNormalizerFactory().get_normalizer("ml")
+_IND_NORM = MalayalamNormalizer()
 
 # Kept for backward compatibility with importers that read this flag; always True now.
 INDIC_NLP_AVAILABLE = True
@@ -589,22 +580,8 @@ INDIC_NLP_AVAILABLE = True
 #   train     — training / fine-tune targets: same canonicalization as eval but numbers are
 #               NOT rewritten (digit verbalization is done outside this library).
 #   inference — reader-facing ITN: keep punctuation and case, number words -> digits.
-_EVAL_MODES = {"eval", "evaluation"}
-_TRAIN_MODES = {"train", "training", "fine-tune", "finetune"}
-_INFER_MODES = {"inference", "infer", "itn"}
-
-
-def _resolve_mode(mode) -> str:
-    m = str(mode or "eval").strip().lower()
-    if m in _INFER_MODES:
-        return "inference"
-    if m in _EVAL_MODES:
-        return "eval"
-    if m in _TRAIN_MODES:
-        return "train"
-    raise ValueError(
-        f"unknown mode {mode!r}; use 'eval', 'train' (aliases: training, fine-tune) or 'inference'"
-    )
+_EVAL_MODES, _TRAIN_MODES, _INFER_MODES = base.EVAL_MODES, base.TRAIN_MODES, base.INFER_MODES
+_resolve_mode = base.resolve_mode
 
 
 # I1 (inference): a standalone ഒന്ന്/ഒന്നു is far more often the softener "just / once"
@@ -626,6 +603,7 @@ def _is_numberish(core: str) -> bool:
     if core[0].isdigit() or core in _ONE2DIGIT or core in _WORD2NUM or core in _EN_ANY:
         return True
     from . import malayalam_itn as _itn          # every spelling the digits module writes
+    core = _itn.fold_spelling(core)              # + the variants ITN reads (ഒൻപത്)
     if core in _itn._combining() or _itn._word_info(core) is not None or _itn.split_suffix(core):
         return True
     return core.endswith("ു") and (core[:-1] + _VIRAMA) in _WORD2NUM   # രണ്ടു, ആറു
@@ -652,7 +630,8 @@ def _hold_lone_one(text: str) -> str:
 # followed by a space / end / non-letter is punctuation (ആണ്: ..., പറ:) and must stay ':' —
 # eval then strips it, inference keeps it. Such colons are swapped for a private-use placeholder
 # around the indic-nlp call so it cannot touch them.
-_COLON_PUNCT = re.compile(r":(?![\u0d00-\u0d7f])")
+# A colon next to a Malayalam DIGIT is held too: ൧൦:൩൦ is a time, not a visarga.
+_COLON_PUNCT = re.compile(r"(?<=[\u0d66-\u0d6f]):|:(?![\u0d00-\u0d65\u0d70-\u0d7f])")
 
 # E13: bracketed annotation tags in references (<unintelligible>, <noise>, <laugh> ...). E5 would
 # strip the brackets and leave the tag NAME as a spoken word; drop the whole tag instead.
@@ -672,18 +651,21 @@ def _protect_num_punct(text: str) -> str:
 _COLON_HOLD = "\ue000"
 
 
-def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
+def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=None,
+              spell_small=None, mixed=True) -> str:
     """Normalize Malayalam ASR text; see module docstring and NORMALIZATION.md (mode selector).
 
     mode="eval" (default; alias "evaluation") — WER/CER scoring: strip punctuation, lowercase,
-    and verbalize digits to native Malayalam words (24 -> ഇരുപത്തിനാല്). English-style number
-    words (ട്വൻറ്റി ഫോർ) are left as written.
+    and verbalize digits to words: native Malayalam (24 -> ഇരുപത്തിനാല്), or English in a
+    mostly-English sentence (I worked 24 hours -> i worked twenty four hours). Number words are
+    left as written (no ITN) unless itn=True.
     mode="train" (aliases "training", "fine-tune") — training targets: like eval, but numbers
     are NOT rewritten (digit verbalization is handled outside this library), punctuation inside
     a number is kept for that verbalizer (4:00-5:00, 2.5, 70%, 23-ന്, 8-9), the C1 fold is off
     (targets keep their real spelling) and <tags> are left to the data pipeline.
     mode="inference" — reader-facing ITN: keep punctuation and case; number words -> digits
-    (ഇരുപത്തിനാല് -> 24, ട്വൻറ്റി ഫോർ -> 24, നാലാം -> 4-ാം); existing digits are left untouched.
+    (ഇരുപത്തിനാല് -> 24, ട്വൻറ്റി ഫോർ -> 24, twenty four -> 24, നാലാം -> 4-ാം); existing digits
+    are left untouched.
 
     segmentation (eval/train only, default OFF) — apply the boundary rules W4 (intra-word hyphen
     join), W3 (single-letter acronym-run collapse) and W5 (adjacent-duplicate collapse). They
@@ -691,23 +673,40 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
     negative (the boundary variants they target are rare, and each occasionally introduces a
     new mismatch); enable when a corpus is known to benefit. No effect in inference mode.
 
+    itn (default None = the mode's default: ON in inference, OFF in eval; no effect in train) —
+    number words -> digits. Inference itn=False keeps number words as written (punctuation, case
+    and canonicalization as usual). Eval itn=True scores in digits instead of words: number
+    words -> digits, and digits are not spelled out (ഇരുപത്തിനാല് പേർ and 24 പേർ both -> 24 പേർ).
+
+    mixed (default True) — code-mixed scripts (see indic_normalizer.mixed): True runs every
+    handler (English in Latin script: inference ITN, eval English digit words), False leaves
+    other scripts to the shared steps only, a dict sets options ({"en": {"spell_small": True}})
+    or turns one off ({"en": False}).
+
+    spell_small (default None = as ``mixed`` sets it, off) — shortcut for
+    mixed={"en": {"spell_small": ...}}: English style for lone small Latin-script numbers in
+    ITN ("I have five" stays; off: "I have 5"). Malayalam-script number words are not affected.
+
     The CER folds C6 (homoglyph ഠ->0 in a number) and C2 (word-final മ് -> ം) run in BOTH modes
     (both unambiguous). C1 (word-final samvruthokaram ...ു്/...ു -> ...്) runs in EVAL ONLY — it
     is a symmetric scoring fold that can also touch a genuine -u vowel, so it is not applied to
     reader-facing inference output. Together they measurably help WER/CER (dataset WER -1.09).
     """
+    from .. import mixed as _mixed
     mode = _resolve_mode(mode)
+    itn = (mode == "inference") if itn is None else bool(itn)
+    active = _mixed.resolve(mixed, spell_small)
 
-    # --- Shared canonicalization base (identical in both modes) ---
+    # --- Shared canonicalization base (identical in all modes) ---
     text = _fix_chillu_conjuncts(text or "")      # E12: ൻ്റ -> ന്റ (mis-encoded conjunct, NFC-invisible)
     text = _COLON_PUNCT.sub(_COLON_HOLD, text)    #      protect punctuation colons (not ദു:ഖം)
     text = _IND_NORM.normalize(text)              # E2:  chillu / ZWJ / two-part vowels / mid-word ':' -> ഃ
     text = text.replace(_COLON_HOLD, ":")
     text = unicodedata.normalize("NFC", text)     # E1
-    text = _UNK.sub(" ", text)                    # E3:  <unk>/⁇ removed in BOTH modes
+    text = _UNK.sub(" ", text)                    # E3:  <unk>/⁇ removed in every mode
     text = _ZW.sub("", text)                      # E4
-    text = "".join(_DIGITS.get(c, c) for c in text)  # E6:  Indic digit -> ASCII (both modes)
-    text = _fix_homoglyphs(text)                  # C6:  ഠ used as zero in a number -> 0 (both modes)
+    text = "".join(_DIGITS.get(c, c) for c in text)  # E6:  Indic digit -> ASCII (every mode)
+    text = _fix_homoglyphs(text)                  # C6:  ഠ used as zero in a number -> 0 (every mode)
     if mode == "train":
         text = _restore_au_length_mark(text)      # T2:  ൌ -> ൗ (undo indic-nlp; train only)
         text = _fold_final_nasal_train(text)      # C2:  word-final മ് -> ം, not after a virama
@@ -722,10 +721,20 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
             text = _protect_num_punct(text)            # T1:  4:00-5:00, 2.5, 70%, 23-ന്, 8-9 survive E5
         if segmentation:
             text = _join_intra_word_hyphen(text)       # W4:  e-mail -> email (BEFORE E5 eats the hyphen)
+        if mode == "eval":                             # numbers: BEFORE E5 (sentence + run boundaries)
+            text = _mixed.canonical(text, active)      # E17: can't -> can not, um, OK -> okay, & -> and
+            text = _signs_to_words(text, active)       # E15: ₹500 / $24 / 20% -> 500 രൂപ / 24 ഡോളർ / 20 ശതമാനം
+            if itn:                                    #      (rupees / dollars / percent in an English sentence)
+                text = _drop_group_commas(_itn_pass(text, active))   # eval ITN: score in digits
+                text = _signs_to_words(text, active)   #      ITN writes 20%: 20 ശതമാനം again
+            else:
+                text = _mixed.verbalize(text, active)  # code-mixed: English sentence numbers -> English words
+                text = _spell_special(text)            # E16: 2.5 / 21st / 4:30 -> the digits module's reading
+        text = base.join_apostrophes(text)             # E14: it's -> its, can't -> cant (not "it s")
         text = _PUNCT.sub(" ", text)                   # E5:  strip punctuation
         if mode == "train":
             text = text.translate(_NUM_PUNCT_RESTORE)
-        if mode == "eval":                             # E8 (eval only; train leaves digits)
+        if mode == "eval" and not itn:                 # E8 (eval only; train leaves digits)
             text = _NUM_RE.sub(_verbalize_digits, text)  #      digits -> native words (24 -> ഇരുപത്തിനാല്)
         text = text.lower()                            # E10: lowercase
         if mode == "eval":
@@ -737,10 +746,28 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
         return _SPACE.sub(" ", text).strip()           # E11
 
     # --- inference: reader-facing ITN (keep E5 punctuation + E10 case; number words -> digits) ---
-    # Existing digits are left exactly as written (4:00-5:00 stays 4:00-5:00). One ITN pass
-    # (malayalam_itn) turns every number WORD into digits: native in every spelling the digits
-    # module writes, English in Malayalam script, lakhs / crores, suffixes, decimals, percent.
-    text = _hold_lone_one(text)                    # I1:  standalone ഒന്ന് = "just/once", not 1
-    text = _to_digits(text)                        # ITN: number words -> digits
-    text = text.replace(_ONE_HOLD, "ഒന്ന്").replace(_ONEU_HOLD, "ഒന്നു")
+    # Existing digits are left exactly as written (4:00-5:00 stays 4:00-5:00). One ITN pass turns
+    # every number WORD into digits: the main language (malayalam_itn: native in every spelling the
+    # digits module writes, English in Malayalam script, lakhs / crores, suffixes, decimals,
+    # percent), then the code-mixed handlers (English in Latin script).
+    if itn:
+        text = _itn_pass(text, active)
     return _SPACE.sub(" ", text).strip()           # E11 (punctuation + case preserved)
+
+
+def itn_numbers(text: str, spell_small=None, mixed=True) -> str:
+    """Inference-mode number words -> digits only: no punctuation, case or other changes.
+
+    The ITN part of normalize(mode="inference"): the same canonicalization base up to NFC
+    (E12 chillu-conjunct fix, colon guard, E2, E1), the lone-ഒന്ന് guard (I1) and number
+    words -> digits (main language, then the code-mixed handlers; ``mixed`` / ``spell_small`` as
+    in normalize), then whitespace collapse. ഇരുപത്തിനാല് രൂപ -> 24 രൂപ.
+    """
+    from .. import mixed as _mixed
+    active = _mixed.resolve(mixed, spell_small)
+    t = _fix_chillu_conjuncts(text or "")
+    t = _COLON_PUNCT.sub(_COLON_HOLD, t)
+    t = _IND_NORM.normalize(t).replace(_COLON_HOLD, ":")
+    t = unicodedata.normalize("NFC", t)
+    t = _itn_pass(t, active)
+    return " ".join(t.split())

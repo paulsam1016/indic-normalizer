@@ -12,13 +12,14 @@ Usage
     from indic_normalizer import get_normalizer, normalize
 
     fn, source = get_normalizer("ml")               # Malayalam, eval mode (default)
-    fn("ട്വൻറ്റി ഫോർ")                                # -> 'ഇരുപത്തിനാല്'
+    fn("24 രൂപ.")                                    # -> 'ഇരുപത്തിനാല് രൂപ'
 
     fn, _ = get_normalizer("ml", mode="inference")  # reader-facing ITN
     fn("ഇരുപത്തിനാല് രൂപ")                            # -> '24 രൂപ'
 
     normalize("ഇ–മെയിൽ", lang="ml")                  # one-shot, eval
     normalize("24 രൂപ.", lang="ml", mode="inference")# one-shot, ITN -> '24 രൂപ.'
+    normalize("ഇരുപത്തിനാല്!", lang="ml", mode="inference", itn=False)  # -> 'ഇരുപത്തിനാല്!'
     normalize("hello, world")                        # no lang -> universal normalizer
 
 `get_normalizer(lang, mode)` returns ``(normalize_fn, source_label)``. A language with a
@@ -26,7 +27,7 @@ dedicated normalizer (e.g. Malayalam) uses it; everything else falls back to the
 language-agnostic ``universal`` normalizer. ``mode`` is "eval" (default; WER/CER
 scoring — numbers verbalized to native words), "train" (aliases "training", "fine-tune"; same but numbers
 left as written) or "inference" (reader-facing ITN: number words -> digits, punctuation + case
-preserved). See NORMALIZATION.md "Mode selector".
+preserved; ``itn=False`` keeps number words as written). See NORMALIZATION.md "Mode selector".
 
 Adding a language: drop ``languages/<lang>.py`` (exposing ``normalize(text, mode)``) and
 register its aliases in ``registry._ALIASES`` + a branch in ``registry._load``.
@@ -35,16 +36,22 @@ register its aliases in ``registry._ALIASES`` + a branch in ``registry._load``.
 from . import base, universal
 from .registry import get_normalizer, script_of
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
-def normalize(text, lang=None, mode="eval", segmentation=False):
+def normalize(text, lang=None, mode="eval", segmentation=False, itn=None, spell_small=None, mixed=True):
     """One-shot normalize ``text`` for ``lang``/``mode`` (universal normalizer if no lang).
 
-    ``segmentation`` (eval-only, default OFF) enables the W3/W4/W5 boundary rules. The
-    C2/C6 CER folds run in every mode; C1 in eval only.
+    ``segmentation`` (eval-only, default OFF) enables the W3/W4/W5 boundary rules. ``itn``
+    (default None = the mode's default: on in inference, off in eval): inference False keeps
+    number words as written; eval True scores in digits instead of words. ``mixed`` (default
+    True): code-mixed handlers for other scripts (``indic_normalizer.mixed``); False leaves them
+    to the shared steps, a dict sets options. ``spell_small``: shortcut for
+    ``mixed={"en": {"spell_small": ...}}`` ("I have five" stays; off: "I have 5"). The C2/C6
+    CER folds run in every mode; C1 in eval only.
     """
-    fn, _ = get_normalizer(lang, mode=mode, segmentation=segmentation)
+    fn, _ = get_normalizer(lang, mode=mode, segmentation=segmentation, itn=itn, spell_small=spell_small,
+                           mixed=mixed)
     return fn(text)
 
 

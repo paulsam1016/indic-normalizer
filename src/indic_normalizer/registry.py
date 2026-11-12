@@ -21,6 +21,7 @@ from . import universal
 # Language name / code -> registry key. Extend as normalizers are added.
 _ALIASES = {
     "ml": "ml", "mal": "ml", "malayalam": "ml",
+    "en": "en", "eng": "en", "english": "en",
 }
 
 
@@ -34,23 +35,33 @@ def _lang_code(lang):
 def _load(code):
     """Import and return ``(normalize_fn, source)`` for a registered code, or None.
 
-    Lazy so a heavy per-language dependency (e.g. indic-nlp-library) only loads when
+    Lazy so a per-language module (and any heavy dependency it has) only loads when
     that language is actually used.
     """
     if code == "ml":
         from .languages import malayalam
         return malayalam.normalize, "indic_normalizer.malayalam"
+    if code == "en":
+        from .languages import english
+        return english.normalize, "indic_normalizer.english"
     return None
 
 
-def get_normalizer(lang=None, mode="eval", segmentation=False):
+def get_normalizer(lang=None, mode="eval", segmentation=False, itn=None, spell_small=None, mixed=True):
     """``(normalize_fn, source)`` for ``lang``/``mode``; universal normalizer as fallback.
 
-    ``normalize_fn`` is ``fn(text)`` with ``mode`` and ``segmentation`` bound. ``mode`` is
+    ``normalize_fn`` is ``fn(text)`` with ``mode``, ``segmentation``, ``itn``, ``spell_small`` and
+    ``mixed`` bound. ``mode`` is
     validated eagerly here (so a bad mode fails at ``get_normalizer`` time, not on first
     call), then bound via ``functools.partial``. ``segmentation`` (eval-only, default OFF)
-    turns on the W3/W4/W5 boundary rules for languages that have them. The C1/C2/C6 CER folds
-    run automatically in eval mode (no flag).
+    turns on the W3/W4/W5 boundary rules for languages that have them. ``itn`` (default None =
+    the mode's default: on in inference, off in eval) turns number words into digits; in eval,
+    True scores in digits instead of words. ``mixed`` (default True) controls the code-mixed
+    handlers (``indic_normalizer.mixed``: English in Latin script); False leaves other scripts
+    to the shared steps, a dict sets per-handler options. ``spell_small`` is a shortcut for
+    ``mixed={"en": {"spell_small": ...}}`` (English style for lone small Latin-script numbers:
+    "I have five" stays; off: "I have 5"). The C1/C2/C6 CER
+    folds run automatically in eval mode (no flag).
     """
     base_fn, source = universal.normalize, "indic_normalizer.universal"
     code = _lang_code(lang)
@@ -58,11 +69,14 @@ def get_normalizer(lang=None, mode="eval", segmentation=False):
         loaded = _load(code)
         if loaded is not None:
             base_fn, source = loaded
-    # Validate the mode up front using the target module's resolver.
+    # Validate the mode and the code-mixed options up front (fail here, not on the first call).
     module = base_fn.__module__
     import importlib
+    from . import mixed as _mixed
     importlib.import_module(module)._resolve_mode(mode)
-    return partial(base_fn, mode=mode, segmentation=segmentation), source
+    _mixed.resolve(mixed, spell_small)
+    return partial(base_fn, mode=mode, segmentation=segmentation, itn=itn, spell_small=spell_small,
+                   mixed=mixed), source
 
 
 # --- optional: Unicode-block script detection (script routing, NOT language ID) ------

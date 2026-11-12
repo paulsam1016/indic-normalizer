@@ -69,3 +69,32 @@ def test_indic_vowel_signs_preserved():
 
 def test_danda_removed():
     assert "।" not in normalize("वाक्य ।")
+
+
+def test_invisible_chars():
+    assert normalize("a​b") == "a b"                       # zero-width space = word break
+    assert normalize("a­b") == normalize("ab") == "ab"      # soft hyphen
+    assert normalize("a⁠b") == "ab"                         # word joiner
+    assert normalize("﻿ab￾") == "ab"
+
+
+def test_group_commas():
+    assert normalize("1,000 रुपये") == normalize("1000 रुपये") == "1000 रुपये"
+    assert normalize("1,75,000") == "175000"                     # Indian lakh grouping
+    assert normalize("1,2,3") == "1 2 3"                         # a list, not a number
+    assert normalize("1,000", mode="inference") == "1,000"       # reader-facing: as written
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("It's fine, I can't.", "its fine i cant"),          # joined, not "it s" / "can t"
+    ("it’s", "its"),                                     # curly apostrophe
+    ("can`t", "cant"),
+    ("The students' books", "the students books"),       # not inside a word: punctuation
+    ("'quoted' text", "quoted text"),
+])
+def test_apostrophe_inside_a_word_joins(text, expected):
+    # train (and the universal normalizer) join; eval expands contractions first (test_english)
+    assert normalize(text) == expected
+    assert normalize(text, lang="ml", mode="train") == expected
+    assert normalize(text, lang="en", mode="train") == expected
+    assert "'" in normalize("It's", lang="ml", mode="inference")   # inference keeps punctuation

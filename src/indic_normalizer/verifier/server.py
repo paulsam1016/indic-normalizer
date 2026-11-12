@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from ..digits.scoring.config import ScoringConfig
-from ..digits.scoring.details import COLS, NUMBER_COLS, SEP, read_tsv, tsv_path, write_tsv
+from ..digits.scoring.details import COLS, NUMBER_COLS, SEP, read_tsv, tsv_path
 from ..digits.scoring.pipeline import bare_core as _bc, plan_text, same_document
 from ..digits import ml
 from .sentences import append_edit, apply_edits, edit_sentence, edits_for, has_sentences, normalize as _norm_sentence

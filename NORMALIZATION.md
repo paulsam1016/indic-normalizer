@@ -61,7 +61,7 @@ chillu wrongly sitting *before* a virama). E12 is our own fix and our biggest si
 - **Manohar, Pillai, Sherly — "What is Lost in Normalization?" (ACL 2024)** proves the
   vanishing-vowels harm and mandates **linguistically-informed, language-specific
   normalizers** (it deliberately proposes no algorithm). Our per-language module in
-  `scripts/normalizers/malayalam.py` is exactly that approach.
+  `src/indic_normalizer/languages/malayalam.py` is exactly that approach.
 - **SN-WER (ACL 2026 MeLLM)** proposes a script-insensitive companion metric for
   cross-script / romanized settings. Not needed for single-script Malayalam scoring, but
   the relevant direction if we ever score against romanized references — report it
@@ -72,7 +72,8 @@ chillu wrongly sitting *before* a virama). E12 is our own fix and our biggest si
 Verdict against the standard tools (full table in the
 [appendix](#appendix-external-tool-comparison)): **our normalizer is the strongest of the
 set for ASR scoring.** It does three things no off-the-shelf tool does — the `ൻ്റ→ന്റ` fix
-(E12), digit verbalization (E8), and English↔Malayalam number canonicalization (E9) — and
+(E12), digit verbalization (E8), and inference ITN that also reads English number words in
+Malayalam script (`ട്വൻറ്റി ഫോർ`→`24`) — and
 it avoids both known traps (Mark-class stripping, and opinionated typo/spelling
 "correction" — see the note under [Recommended order](#recommended-order)).
 
@@ -99,9 +100,11 @@ CER as the headline Malayalam metric neutralizes most WER-side segmentation nois
 
 ## Already handled
 
-Applied in `scripts/normalizers/malayalam.py` (`normalize()` order: indic-nlp/chillu fix →
-NFC → `<unk>`/`⁇` → zero-width → Indic-digit→ASCII → group-comma → punctuation →
-English-number canonicalization → digit verbalization → lowercase → whitespace collapse).
+Applied in `src/indic_normalizer/languages/malayalam.py` (`normalize()` order, eval mode:
+chillu-conjunct fix → colon guard + indic-nlp normaliser → NFC → `<unk>`/`⁇` → zero-width →
+Indic-digit→ASCII → homoglyph fold → word-final `മ്`→`ം` → group-comma → annotation tags →
+punctuation → digit verbalization → lowercase → samvruthokaram fold → whitespace collapse; see
+the Mode selector for train / inference).
 
 The **Complexity** column rates what each rule took to *build* (same ★ scale as the gap
 tables — **★ trivial** library call/one substitution … **★★★★ hard** bespoke logic with
@@ -111,7 +114,7 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
 | # | Item | Effect | Complexity | Notes |
 |---|------|--------|:----------:|-------|
 | E1 | Unicode NFC | CER | ★ trivial | Canonical composition — stdlib `unicodedata.normalize`. |
-| E2 | Chillu / ZWJ-ZWNJ canonicalization | CER | ★ trivial | One call into indic-nlp-library (a required dependency); the library does the work. Punctuation colons are shielded from its colon→visarga rewrite (see Mode selector, colon guard). |
+| E2 | Chillu / ZWJ-ZWNJ canonicalization | CER | ★ trivial | One call into a built-in port of indic-nlp-library's normaliser (identical behaviour), which does the work. Punctuation colons are shielded from its colon→visarga rewrite (see Mode selector, colon guard). |
 | E3 | `⁇` / `<unk>` removal | CER + WER | ★ trivial | OOV marker; fixed-string removal from both sides. |
 | E4 | Zero-width (ZWNJ/ZWJ/BOM) drop | CER | ★ trivial | Fixed codepoint set stripped, after the chillu fix. |
 | E5 | ASCII + Indic punctuation removal | CER + WER | ★ trivial | One character-class regex; includes danda `।` `॥`, quotes, dashes. |
@@ -160,9 +163,27 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
   (`4:00-5:00`, `2950 × 18%`). **I1:** a standalone `ഒന്ന്`/`ഒന്നു` is usually the softener
   "just/once" (`ഒന്ന് നോക്ക്`, `ഒന്ന് ചെക്ക് ചെയ്യ്`), so it becomes `1` only in numeric context —
   a neighbouring number, or a following unit/counter (`രൂപ`, `ദിവസം`, `വർഷം`, `ഇയർ`, `ലാക്`,
-  `മിനിറ്റ്` …). On the call hypotheses this cut lone `1`s from 535 to 60.
+  `മിനിറ്റ്` …). On the call hypotheses this cut lone `1`s from 535 to 60. `itn=False` turns the
+  number-word conversion off and keeps everything else (punctuation, case, canonicalization).
 
 A shared **canonicalization base** runs identically in all three modes.
+
+**Main language vs code-mixed.** Normalization is for the language in `lang` (the *main*
+language); other scripts in the text are *code-mixed*. Steps fall in three tiers: shared
+(script-agnostic, `base.py`), main (the `lang` rules, for everything in its script — including
+English loanwords in Malayalam script, `ട്വന്റി ഫോർ`) and code-mixed (one handler per other
+script, `mixed.py`; today English in Latin script). The main normalizer calls the handlers at the
+right step and gives them its context (its unit words: `five മിനിറ്റ്`→`5 മിനിറ്റ്`). `mixed=False`
+leaves other scripts to the shared steps; `mixed={"en": {...}}` sets a handler's options.
+
+In **eval** the English handler spells out the digits of a mostly-English sentence in English
+(`I worked 24 hours` → `i worked twenty four hours`, the same 1–7-digit / digit-by-digit split as
+E8), so a written `24` meets a spoken `twenty four` — eval has no ITN, so the spoken form is left
+as written and the digits must come to it. A sentence is English when at least half of its
+letters are Latin (`digits.latin.is_english`, the rule the training targets use); otherwise its
+digits get Malayalam words (`ഞാൻ 24 hours ജോലി ചെയ്തു` → `ഇരുപത്തിനാല് hours`). A sentence with
+no letters goes to the main language. `mixed=False` restores Malayalam words everywhere;
+`itn=True` scores both forms in digits instead.
 
 | Step | `eval` | `train` | `inference` |
 |------|--------|------------|-------------|
@@ -176,10 +197,14 @@ A shared **canonicalization base** runs identically in all three modes.
 | C2 word-final `മ്`→`ം` | ✓ | ✓ (not after a virama) | ✓ |
 | E7 digit-grouping comma (`70,000`, `1,75,000`→`175000`) | ✓ | ✓ | ✓ |
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
+| **E14 apostrophe inside a Latin word** (`it's`→`its`, `can't`→`cant`; not `it s`) | join | join | **keep** |
+| **E15 currency sign / percent** (`₹500`, `Rs.500`, `500₹`, `$24`, `€10`, `£5`, `20%`) | → amount + word in the sentence's language (`500 രൂപ` / `500 rupees`, `24 ഡോളർ` / `24 dollars`, `20 ശതമാനം` / `20 percent`), then E8 | — (kept for the external verbalizer) | — (kept) |
+| **E16 decimals / ordinals / times** | → the digits module's first reading (`2.5`→`രണ്ടര`, `3.14`→`മൂന്ന് പോയിന്റ് ഒന്ന് നാല്`, `21st`→`ഇരുപത്തൊന്നാം`, `4:30`→`നാലര`, `11:00`→`പതിനൊന്ന് മണി`); English sentences: every number (`two point five`, `twenty first`, `four oh five`, `nineteen ninety five`) | — | — |
+| **E17 English canonical forms** (code-mixed English; all of `lang="en"`) | contractions expanded (`can't`/`cannot`→`can not`, `it's`→`it is`, `it's been`→`it has been`, `gonna`→`going to`), fillers `um`/`uh`/`hmm`/`mm` dropped (`uh huh`, `mhm` kept), `OK`→`okay`, `&`→`and` (English sentences) | — (as said) | — |
 | **E5 punctuation removal** | strip | strip | **keep** |
-| **E9 English-number words** | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
-| **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit) | — (left as digits) | — (left as digits) |
-| **ITN number words → digits** | — | — | **✓** (`malayalam_itn`; 1–9 + suffix stays words except ordinals; lone `ഒന്ന്` only in numeric context) |
+| **E9 English-number words** (Malayalam or Latin script) | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
+| **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit); in a mostly-English sentence → **English words** (code-mixed handler); left as digits with `itn=True` | — (left as digits) | — (left as digits) |
+| **ITN number words → digits** | opt-in (`itn=True`: score in digits) | — | **✓** (`malayalam_itn` + code-mixed handlers; off with `itn=False`; 1–9 + suffix stays words except ordinals; lone `ഒന്ന്` only in numeric context) |
 | **E10 lowercase** | ✓ | ✓ | **keep case** |
 | **C1 samvruthokaram fold** (`നാലു`→`നാല്`) | ✓ | — (target keeps real spelling) | — (would strip a real `-u` for a reader) |
 | W3/W4/W5 segmentation (`segmentation=True`, default off) | opt-in | opt-in | — |
@@ -188,7 +213,8 @@ A shared **canonicalization base** runs identically in all three modes.
 ¹ **Colon guard.** indic-nlp rewrites any `:` after a Malayalam letter as the visarga `ഃ`. That
 is only right *inside* a word (`ദു:ഖം` → `ദുഃഖം`). A colon followed by a space / end / non-letter
 is punctuation (`ആണ്: …`, `പറ:`) and is protected from indic-nlp, so eval/train strip it and
-inference keeps it. On the eval_frozen set this removed 12 spurious visargas (12 → 0).
+inference keeps it. On the eval_frozen set this removed 12 spurious visargas (12 → 0). A colon
+next to a Malayalam *digit* is protected too: `൧൦:൩൦` is a time (`10:30`), not `10ഃ30`.
 
 **Inference ITN details.** `malayalam_itn` is built by inverting the digits module's
 generator (`indic_normalizer.digits.ml`), so every reading the training targets use reads back:
@@ -205,6 +231,33 @@ next to another number word, a percent word, `കെ`, `പോയിന്റ്
 `ഫസ്റ്റ്`/`സെക്കൻഡ്`, and the ambiguous shorthands (`ആറ് നാനൂറ്റമ്പത്തെട്ട്` for 6458,
 `ഒമ്പതേ അറുപത്തിനാല്`), which are read literally or kept. A repeated thousand/lakh at the same
 scale starts a new number (`ടെൻ തൗസന്റ് ഫിഫ്റ്റീൻ തൗസന്റ്`→`10000 15000`).
+
+Digits said one by one (native or English) are written as **one number only when they look like
+a code**: 4+ digits, a zero, or `ഡബിൾ`/`ട്രിപ്പിൾ` (`ഒമ്പത് എട്ട് …`→`9876543210`, `പൂജ്യം ഏഴ്`→`07`,
+`ഒന്ന് പൂജ്യം രണ്ട്`→`102`, `ഡബിൾ ടു`→`22`). Shorter runs are separate digits: `രണ്ട് മൂന്ന് പേർ`
+is "two or three people" (`2 3 പേർ`, not `23`) and `ഒന്ന് രണ്ട് മൂന്ന്` is counting (`1 2 3`).
+ITN also reads spellings the generator does not write (it follows one spelling policy):
+`ഒൻപത്`/`അൻപത്` and their compounds, `നാല്പത്`/`നാൽപത്`, `എമ്പത്`, `ഇരുന്നൂറ്`, and `ടൂ` as two
+beside a number word. A bare `ലാക്`/`ക്രോർ` with no count stays a word.
+
+**English in Latin script** (`english_itn`, run after the Malayalam-script pass; each leaves the
+other script alone) follows the same rules as the Malayalam-script English reading; a test reads
+the digits module's Latin and Malayalam-script spellings of the same numbers back and checks
+they agree. Both read: bare `hundred` / `thousand` as one (`thousand six hundred`→`1600`), a
+repeated scale as a new number (`10000 15000`), the k form (`20k`), digit strings with zero said
+as `oh` / `ഓ` (`four oh five`→`405`, `double oh seven`→`007`), and years (`nineteen ninety
+five` / `നൈന്റീൻ നൈന്റി ഫൈവ്`→`1995`, first part fifteen–nineteen or twenty). In both, two
+adjacent numbers below 100 that do not combine (`twelve thirty` / `ട്വൽവ് തേർട്ടി`: a time, a
+price or a range) stay words. Latin also reads `and` (`one hundred and five`→`105`), `a hundred`,
+hyphenated forms (`twenty-five thousand`→`25000`) and o'clock (`one o clock`→`1 O’Clock`).
+Differences that come from the script: a lone Latin `one` (also a pronoun) needs number context,
+like `ഒന്ന്` (`one day`→`1 day`, `one of them` stays); Latin `two` / `four` are never "to" /
+"for" (`ടു` / `ഫോർ` are); `twenty second` is 22nd in Latin but `ട്വന്റി സെക്കൻഡ്` is 20 seconds
+(Malayalam script has no plural). A Malayalam unit word is number context for an English number
+(`five മിനിറ്റ്`→`5 മിനിറ്റ്`). Currency words stay words. `spell_small=True` (on `normalize`,
+`get_normalizer`, `itn_numbers`; the default of `english_itn.itn` on its own) gives English style
+for Latin script: every lone zero–nine and small ordinal stays a word unless a unit follows. Ported from the stt service's
+English ITN, with the parser rewritten to match.
 
 `<unk>`/`⁇` is stripped in every mode; inference could instead map it to a marker such as `[?]`
 if model uncertainty should be shown to the reader — an open option, not implemented.
@@ -267,7 +320,7 @@ run automatically. C3/C4/C5 remain gaps.
 | C5 | **Foreign-word transliteration variants** (`ഫോൺ`/`ഫോണ്`, `ബസ്`/`ബസ്സ്`) | Same borrowed word, different spelling. | **★★★ moderate** | *Gap.* Curated canonical-spelling lexicon for frequent borrowings — inherently a hand-built list, no regex. |
 | C4 | **Long-vowel / gemination spelling drift** (`ാ` vs `ാാ`, `ക്ക` vs `ക`) | Casual-transcription doubling/undoubling. | **★★★★ hard** | *Gap.* Gemination is *contrastive* in Malayalam (`കല` art vs `കല്ല` stone), so no blanket `CC→C` rule is safe — needs a conservative per-word whitelist. |
 | <a name="c8"></a>C8 | **Bare (ZWJ-less) word-final chillu** — `consonant + virama` word-finally may not unify with atomic chillu. | Legacy/IME chillu without ZWJ mismatches an atomic-chillu reference. | **★ trivial** | *Not implemented (dropped by request).* Would be a 6-entry word-final map (`ന്`→`ൻ`, …), the inverse of E12. |
-| <a name="c7"></a>C7 | ~~indic-nlp fallback parity gap~~ **RESOLVED** — colon→visarga and two-part vowel-sign composition used to fire only when indic-nlp-library was installed. | (was) an environment-dependent CER difference. | — (done) | **Fixed** by making `indic-nlp-library` a **hard dependency**. Single code path now; no parity gap remains. |
+| <a name="c7"></a>C7 | ~~indic-nlp fallback parity gap~~ **RESOLVED** — colon→visarga and two-part vowel-sign composition used to fire only when indic-nlp-library was installed. | (was) an environment-dependent CER difference. | — (done) | **Fixed**: indic-nlp-library's normaliser is now always available, as a built-in port of it (identical behaviour). Single code path; no parity gap remains. |
 
 > **C1/C2 measured impact.** Unlike the W-family, the endings folds **help on every measured
 > cell**: dataset **WER −1.09**, CER −0.14; calls WER −0.21, CER −0.06 (per-rule, C1 does most
@@ -341,7 +394,8 @@ Pair it with pinned regression cases for the crown-jewel rules: `വിവേക
 
 0. **Guardrail test** (above) — cheap, protects the wins already banked; prevents silently
    reintroducing the vanishing-vowels bug. (C7 fallback-parity is already **resolved** —
-   indic-nlp-library is now a hard dependency, so there is a single code path.)
+   indic-nlp-library's normaliser is built in (a port with identical behaviour), so there is a
+   single code path.)
 1. **W1 + W3** (postposition split-merge + acronym/letter-sequence collapse) — biggest WER-side wins.
 2. **C1 + C2** (samvruthokaram + anusvara) — biggest CER-side wins per line of code, since they
    touch most word endings.
@@ -376,20 +430,21 @@ The reference Malayalam normalizers and what each actually does, evaluated for t
 | capability | ours | indic-nlp-library | libindic/normalizer | whisper_normalizer |
 |---|---|---|---|---|
 | NFC (E1) | ✅ | ➖ does own | ➖ | ➖ |
-| chillu ZWJ-seq → atomic (E2) | ✅ via indic-nlp | ✅ default | ✅ | ✅ |
+| chillu ZWJ-seq → atomic (E2) | ✅ built-in port of indic-nlp-library's normaliser (identical behaviour) | ✅ default | ✅ | ✅ |
 | **`ൻ്റ→ന്റ` conjunct (E12)** | ✅ **unique** | ❌ | ❌ | ❌ |
-| two-part vowel signs (`ൊ ോ ൌ`) | ✅ via indic-nlp (required) | ✅ | ✅ | ✅ |
-| colon → visarga | ✅ via indic-nlp (required) | ✅ | ✅ | ✅ |
+| two-part vowel signs (`ൊ ോ ൌ`) | ✅ built-in port of indic-nlp-library's normaliser (identical behaviour) | ✅ | ✅ | ✅ |
+| colon → visarga | ✅ built-in port of indic-nlp-library's normaliser (identical behaviour) | ✅ | ✅ | ✅ |
 | Indic danda `।॥` removed (E5) | ✅ | ➖ | ❌ ASCII-only | ➖ |
 | Indic digit → ASCII (E6) | ✅ | ❌ | ❌ | ❌ |
 | **digit verbalization (E8)** | ✅ **unique** | ❌ | ❌ | ❌ |
-| **English↔Malayalam number canon. (E9)** | ✅ **unique** | ❌ | ❌ | ❌ |
+| **English number words in Malayalam script → digits (inference ITN)** | ✅ **unique** | ❌ | ❌ | ❌ |
 | Mark-class stripping (the bug) | ❌ correctly avoids | ❌ correctly avoids | ❌ correctly avoids | ⚠️ in non-Indic base path |
 | opinionated typo/spelling "fix" | ❌ correctly avoids | ➖ opt-in | ⚠️ **on by default** | ➖ |
 
 Notes:
-- **indic-nlp-library** (Anoop Kunchukuttan, MIT) — the de-facto standard and our required
-  backend. Its `MalayalamNormalizer` composes legacy ZWJ chillu → atomic (default on),
+- **indic-nlp-library** (Anoop Kunchukuttan, MIT) — the de-facto standard and our
+  backend, built in as a port of its Malayalam normaliser (`_indicnlp_ml.py`, identical
+  behaviour for the default configuration; MIT notice kept). Its `MalayalamNormalizer` composes legacy ZWJ chillu → atomic (default on),
   does two-part vowels / poorna-virama / colon→visarga (default on), and `റ്റ→ട്ട` +
   reverse chillu decomposition (default **off**). Does **not** handle E12.
 - **libindic/normalizer** (Santhosh Thottingal / SMC, LGPL) — YAML-rule driven; removes

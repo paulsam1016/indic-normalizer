@@ -46,5 +46,7 @@ Thumbs.db
 
 # Data (real call transcripts / eval corpus — kept out of version control)
 data/
+# ...but test fixtures (the recorded indic-nlp outputs) are tracked
+!tests/data/
 Claude outputs/
 outputs/

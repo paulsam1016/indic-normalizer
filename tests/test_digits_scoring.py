@@ -6,6 +6,11 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
+import importlib.util  # noqa: E402
+
+needs_yaml = pytest.mark.skipif(importlib.util.find_spec("yaml") is None,
+                                reason="YAML configs need PyYAML (the digits / dev extra)")
+
 from indic_normalizer.digits.scoring import load_config  # noqa: E402
 from indic_normalizer.digits.scoring.audio import load_wav, slice_audio  # noqa: E402
 from indic_normalizer.digits.scoring.compare import compare_dir  # noqa: E402
@@ -79,6 +84,7 @@ def dataset(tmp_path):
     return data, audio, tmp_path
 
 
+@needs_yaml
 def test_config_file_and_overrides(tmp_path):
     p = tmp_path / "c.yaml"
     p.write_text("model_path: ~/m.nemo\nbatch_size: 4\nhead: ctc\ncuda: 0\ncompute_dtype: bfloat16\n",
@@ -398,6 +404,7 @@ def test_sweep_compute_dtype_reloads_model(dataset):
     assert not any(r["param"] == "compute_dtype" for r in skipped["runs"])   # no make_scorer -> skipped
 
 
+@needs_yaml
 def test_sweep_config_file(tmp_path):
     from indic_normalizer.digits.scoring.sweep import load_sweep_config
     p = tmp_path / "s.yaml"
@@ -419,6 +426,7 @@ def test_sweep_config_file(tmp_path):
         load_sweep_config(str(p))
 
 
+@needs_yaml
 def test_sweep_config_base_and_examples():
     from indic_normalizer.digits.scoring.sweep import load_sweep_config
     sc = load_sweep_config(os.path.join(os.path.dirname(__file__), "..", "examples", "digits_sweep_bf16.yaml"))
@@ -481,6 +489,7 @@ def test_verbalize_same_format(dataset):
         verbalize_dir(str(data), str(audio), FakeScorer(), load_config(None), log=lambda *_: None)
 
 
+@needs_yaml
 def test_config_old_output_dir_name():
     assert load_config(None, out_dir="a").out_dir == "a"
     import tempfile, os as _os
@@ -640,7 +649,6 @@ def test_hundred_percentage_reading():
 
 
 def test_currency_sign_written_apart_needs_review():
-    from types import SimpleNamespace
     from indic_normalizer.digits import find
     from indic_normalizer.digits.scoring.pipeline import context_issue, decide, Number
     from indic_normalizer.languages.malayalam import normalize

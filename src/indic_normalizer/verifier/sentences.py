@@ -18,7 +18,7 @@ import csv
 import json
 import os
 import re
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from ..digits.scoring.details import _clean, read_tsv
 from ..digits.scoring.pipeline import _sentences, _split_times, _word_owners, _word_owners_by_text

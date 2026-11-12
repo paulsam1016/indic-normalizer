@@ -15,7 +15,7 @@ design, coverage/gap analysis, and sources.
 ## Install
 
 ```bash
-pip install indic-normalizer            # pulls indic-nlp-library (required)
+pip install indic-normalizer            # no runtime dependencies
 ```
 
 Editable, from a local checkout:
@@ -30,9 +30,14 @@ pip install -e ".[dev]"
 from indic_normalizer import get_normalizer, normalize
 
 # Explicit language (recommended for scoring — you know the benchmark language):
-fn, source = get_normalizer("ml")        # aliases: ml / mal / malayalam
-fn("ട്വൻറ്റി ഫോർ")                        # -> 'ഇരുപത്തിനാല്'
-fn("24") == fn("ട്വൻറ്റി ഫോർ") == fn("ഇരുപത്തിനാല്")   # True
+fn, source = get_normalizer("ml")        # aliases: ml / mal / malayalam; mode="eval" (default)
+fn("24 രൂപ.")                             # -> 'ഇരുപത്തിനാല് രൂപ'
+fn("24") == fn("ഇരുപത്തിനാല്")            # True: digits meet number words
+
+# Reader-facing output: punctuation + case kept, number words -> digits (ITN):
+infer, _ = get_normalizer("ml", mode="inference")
+infer("ട്വൻറ്റി ഫോർ പേർ, ഇരുനൂറ്റമ്പത് രൂപ!")   # -> '24 പേർ, 250 രൂപ!'
+normalize("ഇരുപത്തിനാല് പേർ!", lang="ml", mode="inference", itn=False)  # -> 'ഇരുപത്തിനാല് പേർ!'
 
 # One-shot:
 normalize("ഇ–മെയിൽ", lang="ml")
@@ -44,9 +49,29 @@ script_of("ഇതൊരു")                       # -> 'ml'
 ```
 
 `get_normalizer(lang)` returns `(normalize_fn, source_label)`. A language with a dedicated
-normalizer (Malayalam today) uses it; everything else falls back to the language-agnostic
-**universal** normalizer (NFC, punctuation/zero-width/`⁇` removal, digit-fold, lowercase,
-whitespace collapse).
+normalizer (Malayalam and English today) uses it; everything else falls back to the language-agnostic
+**universal** normalizer (NFC, punctuation/zero-width/`⁇` removal, digit-fold, digit-grouping
+commas, lowercase, whitespace collapse).
+
+Modes: `eval` (default; WER/CER scoring), `train` (training targets: numbers left as written)
+and `inference` (reader-facing: punctuation and case kept, number words → digits). See
+NORMALIZATION.md "Mode selector".
+
+- `itn` — number words → digits. Default: on in `inference`, off in `eval` (eval scores numbers
+  as words: `24` → `ഇരുപത്തിനാല്`). `itn=False` in inference keeps number words as written;
+  `itn=True` in eval scores in digits instead (`ഇരുപത്തിനാല് പേർ` and `24 പേർ` both → `24 പേർ`).
+  No effect in `train`.
+- `mixed` — normalization is for the language in `lang`; other scripts in the text are code-mixed
+  and get their own handlers (`indic_normalizer.mixed`; today English in Latin script). `True`
+  (default) runs them, `False` leaves other scripts to the shared steps only, and a dict sets
+  options per handler: `mixed={"en": {"spell_small": True}}`, or `{"en": False}` to turn one off.
+- `spell_small=True` — shortcut for `mixed={"en": {"spell_small": True}}` (English-style small
+  numbers, below).
+
+```python
+normalize("ഇരുപത്തിനാല് പേർ", lang="ml", itn=True)                  # eval in digits -> '24 പേർ'
+normalize("twenty four people", lang="ml", mode="inference", mixed=False)   # -> 'twenty four people'
+```
 
 ## What the Malayalam normalizer does
 
@@ -54,13 +79,76 @@ Applied identically to reference and hypothesis:
 
 - mis-encoded chillu-conjunct fix (`ൻ്റ → ന്റ`, NFC-invisible — **no other library does
   this**)
-- chillu / ZWJ-ZWNJ canonicalization, two-part vowel signs, colon→visarga (via
-  indic-nlp-library, a required dependency)
-- Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal
-- Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins
-- **English↔Malayalam number canonicalization** (`ട്വൻറ്റി ഫോർ`/`24`/`ഇരുപത്തിനാല്` all
-  collapse to one form)
+- chillu / ZWJ-ZWNJ canonicalization, two-part vowel signs, colon→visarga (a built-in port of
+  indic-nlp-library's normaliser, identical behaviour; see [Third-party code](#third-party-code))
+- Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal; an
+  apostrophe inside a Latin word joins it (`it's` → `its`, `can't` → `cant`, not `it s`)
+- Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins;
+  in a mostly-English sentence digits are spelled out in English instead (`I worked 24 hours` →
+  `i worked twenty four hours`), so they meet a spoken `twenty four hours`
+- currency signs and percent become words in eval, in the sentence's language: `₹500` →
+  `അഞ്ഞൂറ് രൂപ` (`five hundred rupees` in an English sentence), `$24` → `ഇരുപത്തിനാല് ഡോളർ`,
+  `20%` → `ഇരുപത് ശതമാനം` / `twenty percent` (train and inference keep the sign)
+- English number words, in Malayalam script (`ട്വൻറ്റി ഫോർ`) or Latin script (`twenty four`),
+  are left as written in eval / train; inference mode reads them as digits (`→ 24`)
+- decimals, ordinals and times are read the way the digits module writes training targets
+  (`2.5` → `രണ്ടര`, `21st` → `ഇരുപത്തൊന്നാം`, `4:30` → `നാലര`; in an English sentence `two point
+  five`, `twenty first`, `four thirty`)
+- code-mixed English in eval: the English canonical forms (below)
 - lowercase (code-mixed English), whitespace collapse
+
+Number words to digits only, with no punctuation, case or other changes (the ITN step of
+`mode="inference"` on its own). Digits said one by one become one number when they look like a
+code (4+ digits, a zero, or `ഡബിൾ`/`ട്രിപ്പിൾ`: phones, OTPs, `007`); shorter runs stay separate
+digits (`രണ്ട് മൂന്ന് പേർ` → `2 3 പേർ`, "two or three people"):
+
+```python
+from indic_normalizer.languages.malayalam import itn_numbers
+itn_numbers("ഇരുനൂറ്റമ്പത് രൂപ, ഒന്ന് നോക്ക്!")   # -> '250 രൂപ, ഒന്ന് നോക്ക്!'
+itn_numbers("ഞാൻ twenty four hours ജോലി ചെയ്തു")    # -> 'ഞാൻ 24 hours ജോലി ചെയ്തു'
+```
+
+Latin-script English (`indic_normalizer.languages.english_itn`, also usable on its own) follows
+the same rules as Malayalam-script English, so `two lakh` and `ടൂ ലാക്` both give `2,00,000`,
+and `thousand six hundred` and `തൗസന്റ് സിക്സ് ഹൺഡ്രഡ്` both give `1600`. It also reads `and`,
+`a hundred`, years (`nineteen ninety five` → `1995`), hyphenated forms and `one o clock` →
+`1 O’Clock`. Ambiguous pairs (`twelve thirty`: a time or a price) stay words. A lone `one` (also a
+pronoun) needs number context such as a unit word (`one day` → `1 day`, `one of them` stays);
+`to` / `for` are never numbers; currency words stay words (`ten dollars` → `10 dollars`).
+
+Lone small numbers in Latin-script English (zero–nine or a small ordinal with no unit after it)
+convert by default, like the Malayalam side (`I have five` → `I have 5`, `the third time` →
+`the 3rd time`). Pass `spell_small=True` to `normalize`, `get_normalizer` or `itn_numbers` for
+English style, where they stay words (`I have five`, `the third time`; `five days` → `5 days`
+either way). Malayalam-script number words are not affected. `english_itn.itn` used on its own
+defaults to `spell_small=True`, as in the stt service.
+
+## What the English normalizer does (`lang="en"`)
+
+English as the main language. The same steps are applied to English inside another main
+language (`mixed`), sentence by sentence.
+
+- **eval** — numbers as words, read the way the digits module writes English training targets
+  (`24` → `twenty four`, `2.5` → `two point five`, `21st` → `twenty first`, `4:05` → `four oh
+  five`, `1995` → `nineteen ninety five`); currency and percent as words (`₹500` → `five hundred
+  rupees`, `20%` → `twenty percent`); canonical forms: contractions expanded (`can't` / `cannot`
+  → `can not`, `we'll` → `we will`, `it's` → `it is` / `it's been` → `it has been`, `let's` →
+  `let us`, `gonna` → `going to`), fillers dropped (`um`, `uh`, `hmm`, `mm`; `uh huh` and `mhm`
+  kept), `OK` → `okay`, `&` → `and`; apostrophe join (`John's` → `johns`); punctuation removed,
+  lowercase. `itn=True` scores in digits instead (`twenty four` → `24`).
+- **train** — apostrophe join, punctuation removed, lowercase; numbers and contractions left as
+  written.
+- **inference** — punctuation and case kept; number words → digits, English style by default
+  (`spell_small=True`: `I have five` stays; `twenty four dollars` → `24 dollars`, `four thirty
+  PM` → `4:30 PM`).
+
+```python
+normalize("Um, I can't pay $24, OK?", lang="en")                 # -> 'i can not pay twenty four dollars okay'
+normalize("I can't pay twenty four dollars.", lang="en", mode="inference")  # -> "I can't pay 24 dollars."
+```
+
+Canonical forms can be turned off for code-mixed English with
+`mixed={"en": {"canonical": False}}`.
 
 ## Digits module (`indic_normalizer.digits`)
 
@@ -164,6 +252,17 @@ pass it.
 pip install -e ".[dev]"
 pytest
 ```
+
+The built-in indic-nlp port is checked against outputs recorded from the real indic-nlp-library
+0.92 (`tests/data/indicnlp_092_ml.json`, regenerated by `tests/data/make_indicnlp_fixture.py`), so
+the tests don't need that library installed.
+
+## Third-party code
+
+`src/indic_normalizer/_indicnlp_ml.py` is a port of the Malayalam normaliser from
+[indic-nlp-library](https://github.com/anoopkunchukuttan/indic_nlp_library) 0.92
+(MIT, © 2013-present Anoop Kunchukuttan), restricted to the default configuration this package
+uses. Its MIT notice is kept in the file header.
 
 ## License
 
