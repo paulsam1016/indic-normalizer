@@ -199,6 +199,8 @@ no letters goes to the main language. `mixed=False` restores Malayalam words eve
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
 | **E14 apostrophe inside a Latin word** (`it's`→`its`, `can't`→`cant`; not `it s`) | join | join | **keep** |
 | **E15 currency sign / percent** (`₹500`, `Rs.500`, `500₹`, `$24`, `€10`, `£5`, `20%`) | → amount + word in the sentence's language (`500 രൂപ` / `500 rupees`, `24 ഡോളർ` / `24 dollars`, `20 ശതമാനം` / `20 percent`), then E8 | — (kept for the external verbalizer) | — (kept) |
+| **E16 decimals / ordinals / times** | → the digits module's first reading (`2.5`→`രണ്ടര`, `3.14`→`മൂന്ന് പോയിന്റ് ഒന്ന് നാല്`, `21st`→`ഇരുപത്തൊന്നാം`, `4:30`→`നാലര`, `11:00`→`പതിനൊന്ന് മണി`); English sentences: every number (`two point five`, `twenty first`, `four oh five`, `nineteen ninety five`) | — | — |
+| **E17 English canonical forms** (code-mixed English; all of `lang="en"`) | contractions expanded (`can't`/`cannot`→`can not`, `it's`→`it is`, `it's been`→`it has been`, `gonna`→`going to`), fillers `um`/`uh`/`hmm`/`mm` dropped (`uh huh`, `mhm` kept), `OK`→`okay`, `&`→`and` (English sentences) | — (as said) | — |
 | **E5 punctuation removal** | strip | strip | **keep** |
 | **E9 English-number words** (Malayalam or Latin script) | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
 | **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit); in a mostly-English sentence → **English words** (code-mixed handler); left as digits with `itn=True` | — (left as digits) | — (left as digits) |

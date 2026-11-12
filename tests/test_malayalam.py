@@ -501,7 +501,7 @@ def test_itn_v2_digits_roundtrip_native():
 
 # --- colon guard: a colon next to a Malayalam DIGIT is a time, not a visarga --------------
 @pytest.mark.parametrize("mode, expected", [
-    ("eval", "സമയം പത്ത് മുപ്പത് ആണ്"),
+    ("eval", "സമയം പത്തര ആണ്"),                    # a time: the digits module's reading
     ("train", "സമയം 10:30 ആണ്"),
     ("inference", "സമയം 10:30 ആണ്"),
 ])

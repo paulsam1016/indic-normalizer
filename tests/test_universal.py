@@ -93,7 +93,8 @@ def test_group_commas():
     ("'quoted' text", "quoted text"),
 ])
 def test_apostrophe_inside_a_word_joins(text, expected):
-    assert normalize(text, lang="en") == expected
-    assert normalize(text, lang="ml") == expected
+    # train (and the universal normalizer) join; eval expands contractions first (test_english)
+    assert normalize(text) == expected
     assert normalize(text, lang="ml", mode="train") == expected
+    assert normalize(text, lang="en", mode="train") == expected
     assert "'" in normalize("It's", lang="ml", mode="inference")   # inference keeps punctuation

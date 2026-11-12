@@ -70,6 +70,7 @@ UNIT_WORDS = {"days", "day", "weeks", "week", "months", "month", "years", "year"
               "minute", "seconds", "second", "times", "time", "kg", "kilos", "kilograms", "grams", "km",
               "kilometers", "kilometres", "meters", "metres", "liters", "litres", "people", "person",
               "persons", "members", "items", "pages", "am", "pm", "a.m.", "p.m."}
+AM_PM = {"am", "pm", "a.m.", "p.m.", "a.m", "p.m"}
 RANGE_WORDS = {"to", "or"}                       # five to six days: context passes across the range
 NUMBER_VOCAB = set(UNITS) | set(TENS) | set(SCALES) | {"hundred"} | set(ORD_UNITS) | set(ORD_TENS) | set(ORD_SCALES)
 
@@ -335,6 +336,15 @@ def itn_tokens(tokens: List[str], *, spell_small: bool = True,
                     text, is_plain = indian_grouping(value), True
                 j = i + used
                 second = _parse_cardinal(w[j:lim]) if is_plain and value < 100 and j < lim else None
+                k2 = j + second[1] if second else j
+                if (second and not second[2] and 1 <= value <= 12 and 0 <= second[0] <= 59
+                        and second[0] >= 10 and k2 < W.n and W.joined(k2) and w[k2] in AM_PM
+                        and W.last[k2 - 1]):
+                    # four thirty pm: am / pm makes it a time -> 4:30 pm (the am / pm word stays)
+                    out.append(W.pre[W.tok[i]] + f"{value}:{second[0]:02d}" + W.post[W.tok[k2 - 1]])
+                    prev_number_end = -1
+                    i = k2
+                    continue
                 if second and second[0] < 100 and not second[2]:
                     # two numbers below 100 side by side that do not combine (twelve thirty, four
                     # twenty eight): a time, a price or a range; ambiguous, so both stay words

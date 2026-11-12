@@ -21,6 +21,7 @@ from . import universal
 # Language name / code -> registry key. Extend as normalizers are added.
 _ALIASES = {
     "ml": "ml", "mal": "ml", "malayalam": "ml",
+    "en": "en", "eng": "en", "english": "en",
 }
 
 
@@ -40,6 +41,9 @@ def _load(code):
     if code == "ml":
         from .languages import malayalam
         return malayalam.normalize, "indic_normalizer.malayalam"
+    if code == "en":
+        from .languages import english
+        return english.normalize, "indic_normalizer.english"
     return None
 
 

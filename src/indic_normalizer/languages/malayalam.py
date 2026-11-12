@@ -420,6 +420,24 @@ def _to_digits(text: str, spell_small: bool = False, mixed=True) -> str:
     return _mixed.itn(itn(text), _mixed.resolve(mixed, spell_small), unit_word=_is_unit_token)
 
 
+_SPECIAL = ("decimal", "ordinal", "time")
+
+
+def _spell_special(text: str) -> str:
+    """Eval E16: decimals, ordinals and times are read the way the digits module writes training
+    targets (its first reading): 2.5 -> രണ്ടര, 3.14 -> മൂന്ന് പോയിന്റ് ഒന്ന് നാല്, 21st ->
+    ഇരുപത്തൊന്നാം, 4:30 -> നാലര. Without this E5 splits them (2.5 -> രണ്ട് അഞ്ച്, 21st ->
+    ഇരുപത്തിയൊന്ന്st). Plain integers are left to E8."""
+    from ..digits import alone, candidates, find, next_word
+    spans = [sp for sp in find(text) if sp.cls in _SPECIAL]
+    solo = alone(text)
+    for sp in reversed(spans):
+        c = candidates(sp, next_word=next_word(text, sp), alone=solo)
+        if c:
+            text = f"{text[:sp.start]} {c[0].text} {text[sp.end:]}"
+    return text
+
+
 def _signs_to_words(text: str, active) -> str:
     """Eval E15: currency sign / percent with an amount -> amount + word in the sentence's
     language (code-mixed handlers first, then the main language); a lone sign is dropped."""
@@ -704,12 +722,14 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
         if segmentation:
             text = _join_intra_word_hyphen(text)       # W4:  e-mail -> email (BEFORE E5 eats the hyphen)
         if mode == "eval":                             # numbers: BEFORE E5 (sentence + run boundaries)
+            text = _mixed.canonical(text, active)      # E17: can't -> can not, um, OK -> okay, & -> and
             text = _signs_to_words(text, active)       # E15: ₹500 / $24 / 20% -> 500 രൂപ / 24 ഡോളർ / 20 ശതമാനം
             if itn:                                    #      (rupees / dollars / percent in an English sentence)
                 text = _drop_group_commas(_itn_pass(text, active))   # eval ITN: score in digits
                 text = _signs_to_words(text, active)   #      ITN writes 20%: 20 ശതമാനം again
             else:
-                text = _mixed.verbalize(text, active)  # code-mixed: English sentence digits -> English words
+                text = _mixed.verbalize(text, active)  # code-mixed: English sentence numbers -> English words
+                text = _spell_special(text)            # E16: 2.5 / 21st / 4:30 -> the digits module's reading
         text = base.join_apostrophes(text)             # E14: it's -> its, can't -> cant (not "it s")
         text = _PUNCT.sub(" ", text)                   # E5:  strip punctuation
         if mode == "train":

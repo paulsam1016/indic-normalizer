@@ -35,13 +35,46 @@ class EnglishOptions:
     # inference ITN: English style for lone small numbers ("I have five" stays); False reads
     # them like the main language's ITN ("I have 5")
     spell_small: bool = False
+    # eval: canonical forms (contractions expanded, fillers dropped, OK -> okay, & -> and)
+    canonical: bool = True
+
+
+_A = "['\u2019\u2018\u02bc`]"                     # an apostrophe, any form
+_CONTRACTIONS = [(re.compile(p, re.I), r) for p, r in (
+    (rf"\bcan{_A}t\b", "can not"), (r"\bcannot\b", "can not"),
+    (rf"\bwon{_A}t\b", "will not"), (rf"\bshan{_A}t\b", "shall not"),
+    (rf"\b([a-z]+)n{_A}t\b", r"\1 not"),              # don't, isn't, didn't, couldn't ...
+    (rf"\blet{_A}s\b", "let us"),
+    # 's after these pronouns is "has" before been / got (it's been), else "is"; after any other
+    # word it is a possessive (John's) and is left to the apostrophe join
+    (rf"\b(it|that|what|there|here|he|she|who|where|how|this){_A}s(\s+(?:been|got)\b)", r"\1 has\2"),
+    (rf"\b(it|that|what|there|here|he|she|who|where|how|this)\s?{_A}s\b", r"\1 is"),
+    (rf"\b([a-z]+){_A}re\b", r"\1 are"), (rf"\b([a-z]+){_A}ll\b", r"\1 will"),
+    (rf"\b([a-z]+){_A}ve\b", r"\1 have"), (rf"\bi{_A}m\b", "i am"),
+    (rf"\b([a-z]+){_A}d\b", r"\1 would"),
+    (r"\bgonna\b", "going to"), (r"\bwanna\b", "want to"), (r"\bgotta\b", "got to"),
+)]
+# um / uh / hmm / mm (and longer spellings) are hesitations; "uh huh" (yes) and "mhm" are kept
+_FILLER = re.compile(r"(?i)\b(?:u+m+|u+h+|h+m+|m{2,})\b(?![\s-]+huh\b)")
+_OKAY = re.compile(r"(?i)\b(?:ok|okey|o\.k\.?)(?![\w.])")
+_AND = re.compile(r"\s*&\s*")
+
+
+def _canonical(text: str) -> str:
+    for rx, rep in _CONTRACTIONS:
+        text = rx.sub(rep, text)
+    text = _FILLER.sub(" ", text)
+    return _OKAY.sub("okay", text)
 
 
 class English:
-    """English in Latin script. Inference: number words -> digits (english_itn). Eval: digits in a
-    mostly-English sentence are spelled out in English (I worked 24 hours -> twenty four hours),
-    so they meet a spoken "twenty four hours", and a currency sign becomes its English word
-    (₹500 -> five hundred rupees); other sentences are left to the main language."""
+    """English in Latin script. Inference: number words -> digits (english_itn). Eval, in a
+    mostly-English sentence (or all of the text, ``every=True``, when English is the main
+    language): numbers are spelled out the way the digits module writes training targets
+    (24 -> twenty four, 2.5 -> two point five, 21st -> twenty first, 4:05 -> four oh five,
+    1995 -> nineteen ninety five), currency signs and percent become words (₹500 -> five hundred
+    rupees), and the canonical forms apply (can't -> can not, um dropped, OK -> okay, & -> and);
+    other sentences are left to the main language."""
 
     name = "en"
     Options = EnglishOptions
@@ -52,17 +85,10 @@ class English:
 
     # a sentence ends at . ! ? । ॥ followed by a space or the end (not inside 2.5 / 2.0.1), or a newline
     _SENTENCE = re.compile(r".*?(?:[.!?।॥]+(?=\s|$)|\n|$)", re.S)
-    _DIGITS = re.compile(r"[0-9]+")
 
-    @staticmethod
-    def _words(m: "re.Match[str]") -> str:
-        from .digits import latin
-        s = m.group(0)
-        if len(s) > 7 or (len(s) > 1 and s[0] == "0"):      # id-like: digit by digit (as E8)
-            return f" {latin.digits(s)} "
-        return f" {latin.words(int(s))} "
-
-    def _per_english_sentence(self, text: str, fn) -> str:
+    def _per_english_sentence(self, text: str, fn, every: bool = False) -> str:
+        if every:
+            return fn(text)
         from .digits import latin
         out = []
         for m in self._SENTENCE.finditer(text):
@@ -70,16 +96,30 @@ class English:
             out.append(fn(seg) if seg and latin.is_english(seg) else seg)
         return "".join(out)
 
-    def verbalize(self, text: str, opts: EnglishOptions) -> str:
-        return self._per_english_sentence(text, lambda seg: self._DIGITS.sub(self._words, seg))
+    @staticmethod
+    def _spell(seg: str) -> str:
+        from .digits import verbalize
+        return verbalize(seg, latin=True)
+
+    def verbalize(self, text: str, opts: EnglishOptions, every: bool = False) -> str:
+        """Eval: numbers -> English words, as the digits module writes them (first reading)."""
+        return self._per_english_sentence(text, self._spell, every)
 
     CURRENCY = {"inr": ("rupee", "rupees"), "usd": ("dollar", "dollars"), "eur": ("euro", "euros"),
                 "gbp": ("pound", "pounds"), "pct": ("percent", "percent")}
 
-    def currency(self, text: str, opts: EnglishOptions) -> str:
+    def currency(self, text: str, opts: EnglishOptions, every: bool = False) -> str:
         """Eval: ₹500 / $24 / 20% in an English sentence -> 500 rupees / 24 dollars / 20 percent."""
         from .base import currency_to_words
-        return self._per_english_sentence(text, lambda seg: currency_to_words(seg, self.CURRENCY))
+        return self._per_english_sentence(text, lambda seg: currency_to_words(seg, self.CURRENCY), every)
+
+    def canonical(self, text: str, opts: EnglishOptions, every: bool = False) -> str:
+        """Eval: contractions, fillers and OK are Latin words, so they are folded wherever they
+        are; & -> and only in an English sentence (elsewhere it is dropped with the punctuation)."""
+        if not opts.canonical:
+            return text
+        text = _canonical(text)
+        return self._per_english_sentence(text, lambda seg: _AND.sub(" and ", seg), every)
 
 
 HANDLERS = {"en": English()}
@@ -122,6 +162,13 @@ def itn(text: str, active: Dict[str, object], unit_word: UnitWord = None) -> str
     """Inference ITN of every active handler (after the main language's own ITN)."""
     for name, opts in active.items():
         text = HANDLERS[name].itn(text, opts, unit_word)
+    return text
+
+
+def canonical(text: str, active: Dict[str, object]) -> str:
+    """Eval: each active handler's canonical forms (English: can't -> can not, um, OK, &)."""
+    for name, opts in active.items():
+        text = HANDLERS[name].canonical(text, opts)
     return text
 
 

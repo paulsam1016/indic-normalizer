@@ -49,7 +49,7 @@ script_of("ഇതൊരു")                       # -> 'ml'
 ```
 
 `get_normalizer(lang)` returns `(normalize_fn, source_label)`. A language with a dedicated
-normalizer (Malayalam today) uses it; everything else falls back to the language-agnostic
+normalizer (Malayalam and English today) uses it; everything else falls back to the language-agnostic
 **universal** normalizer (NFC, punctuation/zero-width/`⁇` removal, digit-fold, digit-grouping
 commas, lowercase, whitespace collapse).
 
@@ -91,6 +91,10 @@ Applied identically to reference and hypothesis:
   `20%` → `ഇരുപത് ശതമാനം` / `twenty percent` (train and inference keep the sign)
 - English number words, in Malayalam script (`ട്വൻറ്റി ഫോർ`) or Latin script (`twenty four`),
   are left as written in eval / train; inference mode reads them as digits (`→ 24`)
+- decimals, ordinals and times are read the way the digits module writes training targets
+  (`2.5` → `രണ്ടര`, `21st` → `ഇരുപത്തൊന്നാം`, `4:30` → `നാലര`; in an English sentence `two point
+  five`, `twenty first`, `four thirty`)
+- code-mixed English in eval: the English canonical forms (below)
 - lowercase (code-mixed English), whitespace collapse
 
 Number words to digits only, with no punctuation, case or other changes (the ITN step of
@@ -118,6 +122,33 @@ convert by default, like the Malayalam side (`I have five` → `I have 5`, `the 
 English style, where they stay words (`I have five`, `the third time`; `five days` → `5 days`
 either way). Malayalam-script number words are not affected. `english_itn.itn` used on its own
 defaults to `spell_small=True`, as in the stt service.
+
+## What the English normalizer does (`lang="en"`)
+
+English as the main language. The same steps are applied to English inside another main
+language (`mixed`), sentence by sentence.
+
+- **eval** — numbers as words, read the way the digits module writes English training targets
+  (`24` → `twenty four`, `2.5` → `two point five`, `21st` → `twenty first`, `4:05` → `four oh
+  five`, `1995` → `nineteen ninety five`); currency and percent as words (`₹500` → `five hundred
+  rupees`, `20%` → `twenty percent`); canonical forms: contractions expanded (`can't` / `cannot`
+  → `can not`, `we'll` → `we will`, `it's` → `it is` / `it's been` → `it has been`, `let's` →
+  `let us`, `gonna` → `going to`), fillers dropped (`um`, `uh`, `hmm`, `mm`; `uh huh` and `mhm`
+  kept), `OK` → `okay`, `&` → `and`; apostrophe join (`John's` → `johns`); punctuation removed,
+  lowercase. `itn=True` scores in digits instead (`twenty four` → `24`).
+- **train** — apostrophe join, punctuation removed, lowercase; numbers and contractions left as
+  written.
+- **inference** — punctuation and case kept; number words → digits, English style by default
+  (`spell_small=True`: `I have five` stays; `twenty four dollars` → `24 dollars`, `four thirty
+  PM` → `4:30 PM`).
+
+```python
+normalize("Um, I can't pay $24, OK?", lang="en")                 # -> 'i can not pay twenty four dollars okay'
+normalize("I can't pay twenty four dollars.", lang="en", mode="inference")  # -> "I can't pay 24 dollars."
+```
+
+Canonical forms can be turned off for code-mixed English with
+`mixed={"en": {"canonical": False}}`.
 
 ## Digits module (`indic_normalizer.digits`)
 

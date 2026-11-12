@@ -109,4 +109,4 @@ def test_signs_details():
     assert ml("hours 500") == "hours five hundred"              # rs only as a word of its own
     assert ml("ഞാൻ ₹500 കൊടുത്തു", mode="train") == "ഞാൻ ₹500 കൊടുത്തു"        # train keeps the sign
     assert ml("ഞാൻ 20% കൊടുത്തു", mode="inference") == "ഞാൻ 20% കൊടുത്തു"
-    assert ml("version 2.0.1") == "version two zero one"         # a dot inside a number ends no sentence
+    assert ml("version 2.0.1") == "version two point zero one"   # a dot inside a number ends no sentence
