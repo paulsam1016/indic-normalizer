@@ -83,3 +83,17 @@ def test_group_commas():
     assert normalize("1,75,000") == "175000"                     # Indian lakh grouping
     assert normalize("1,2,3") == "1 2 3"                         # a list, not a number
     assert normalize("1,000", mode="inference") == "1,000"       # reader-facing: as written
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("It's fine, I can't.", "its fine i cant"),          # joined, not "it s" / "can t"
+    ("it’s", "its"),                                     # curly apostrophe
+    ("can`t", "cant"),
+    ("The students' books", "the students books"),       # not inside a word: punctuation
+    ("'quoted' text", "quoted text"),
+])
+def test_apostrophe_inside_a_word_joins(text, expected):
+    assert normalize(text, lang="en") == expected
+    assert normalize(text, lang="ml") == expected
+    assert normalize(text, lang="ml", mode="train") == expected
+    assert "'" in normalize("It's", lang="ml", mode="inference")   # inference keeps punctuation

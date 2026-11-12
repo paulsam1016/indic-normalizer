@@ -81,7 +81,8 @@ Applied identically to reference and hypothesis:
   this**)
 - chillu / ZWJ-ZWNJ canonicalization, two-part vowel signs, colon→visarga (a built-in port of
   indic-nlp-library's normaliser, identical behaviour; see [Third-party code](#third-party-code))
-- Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal
+- Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal; an
+  apostrophe inside a Latin word joins it (`it's` → `its`, `can't` → `cant`, not `it s`)
 - Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins;
   in a mostly-English sentence digits are spelled out in English instead (`I worked 24 hours` →
   `i worked twenty four hours`), so they meet a spoken `twenty four hours`

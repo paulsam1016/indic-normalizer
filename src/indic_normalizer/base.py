@@ -29,6 +29,12 @@ PUNCT = re.compile(r"[.,!?;:\"'`~^*_=+/\\|<>(){}\[\]@#$%&…।॥“”‘’«
 
 SPACE = re.compile(r"\s+")
 
+# An apostrophe between two Latin letters joins the word (it's -> its, can't -> cant,
+# o'clock -> oclock) instead of splitting it in two (it s). Straight, curly, modifier-letter and
+# backtick forms. Any other apostrophe (quotes, students') is punctuation.
+_LATIN = "A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u024f"
+WORD_APOSTROPHE = re.compile(f"(?<=[{_LATIN}])['\u2019\u2018\u02bc`](?=[{_LATIN}])")
+
 # Digit-grouping commas, Western and Indian lakh (70,000 / 1,75,000 -> one digit run). A
 # 1,2,3 list is not a grouped number and is left alone.
 GROUP_COMMA = re.compile(r"(?<![\d,])\d{1,3}(?:(?:,\d{2})*,\d{3}|(?:,\d{3})+)(?!,?\d)")
@@ -99,6 +105,11 @@ def fold_digits(text: str) -> str:
         d = unicodedata.decimal(ch, None)
         out.append(str(d) if d is not None else ch)
     return "".join(out)
+
+
+def join_apostrophes(text: str) -> str:
+    """it's -> its, can't -> cant: an apostrophe inside a Latin word is removed, not spaced."""
+    return WORD_APOSTROPHE.sub("", text)
 
 
 def strip_punct(text: str) -> str:

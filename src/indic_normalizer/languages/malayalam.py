@@ -696,6 +696,7 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
                 text = _drop_group_commas(_itn_pass(text, active))   # eval ITN: score in digits
             else:
                 text = _mixed.verbalize(text, active)  # code-mixed: English sentence digits -> English words
+        text = base.join_apostrophes(text)             # E14: it's -> its, can't -> cant (not "it s")
         text = _PUNCT.sub(" ", text)                   # E5:  strip punctuation
         if mode == "train":
             text = text.translate(_NUM_PUNCT_RESTORE)
