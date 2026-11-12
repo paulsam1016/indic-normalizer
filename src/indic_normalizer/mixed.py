@@ -23,6 +23,7 @@ Handlers today: ``en`` (English in Latin script).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, fields, replace
 from typing import Callable, Dict, Optional
 
@@ -37,7 +38,10 @@ class EnglishOptions:
 
 
 class English:
-    """English in Latin script. Inference: number words -> digits (english_itn)."""
+    """English in Latin script. Inference: number words -> digits (english_itn). Eval: digits in a
+    mostly-English sentence are spelled out in English (I worked 24 hours -> twenty four hours),
+    so they meet a spoken "twenty four hours"; digits in other sentences are left to the main
+    language."""
 
     name = "en"
     Options = EnglishOptions
@@ -46,8 +50,26 @@ class English:
         from .languages.english_itn import itn
         return itn(text, spell_small=opts.spell_small, unit_word=unit_word)
 
+    _SENTENCE = re.compile(r"[^.!?।॥\n]*(?:[.!?।॥\n]+|$)")
+    _DIGITS = re.compile(r"[0-9]+")
+
+    @staticmethod
+    def _words(m: "re.Match[str]") -> str:
+        from .digits import latin
+        s = m.group(0)
+        if len(s) > 7 or (len(s) > 1 and s[0] == "0"):      # id-like: digit by digit (as E8)
+            return f" {latin.digits(s)} "
+        return f" {latin.words(int(s))} "
+
     def verbalize(self, text: str, opts: EnglishOptions) -> str:
-        return text                                        # eval: nothing yet
+        from .digits import latin
+        out = []
+        for m in self._SENTENCE.finditer(text):
+            seg = m.group(0)
+            if seg and latin.is_english(seg):
+                seg = self._DIGITS.sub(self._words, seg)
+            out.append(seg)
+        return "".join(out)
 
 
 HANDLERS = {"en": English()}

@@ -52,3 +52,28 @@ def test_eval_itn_details():
     assert ml("ഒന്ന് നോക്ക്", itn=True) == "ഒന്ന് നോക്ക്"                 # the I1 guard holds
     assert ml("24 പേർ") == "ഇരുപത്തിനാല് പേർ"                             # default: words
     assert ml("24", mode="train", itn=True) == "24"                       # no effect in train
+
+
+# --- eval: digits in an English sentence are spelled out in English -------------------------
+@pytest.mark.parametrize("ref, hyp", [
+    ("I worked 24 hours", "I worked twenty four hours"),
+    ("call 9847012345", "call nine eight four seven zero one two three four five"),
+    ("Room 101.", "room one hundred one"),
+])
+def test_eval_english_sentence_digits_meet_english_words(ref, hyp):
+    assert ml(ref) == ml(hyp)
+
+
+def test_eval_english_digit_words():
+    assert ml("I worked 24 hours") == "i worked twenty four hours"
+    assert ml("Pay 2,50,000 now") == "pay two lakh fifty thousand now"       # group commas first
+    assert ml("PIN 0471") == "pin zero four seven one"                        # leading zero: digit by digit
+    # per sentence: a Malayalam sentence keeps Malayalam words, even beside an English one
+    assert ml("ഞാൻ 24 hours ജോലി ചെയ്തു. I slept 8 hours.") == \
+        "ഞാൻ ഇരുപത്തിനാല് hours ജോലി ചെയ്ത് i slept eight hours"
+    assert ml("24 പേർ") == "ഇരുപത്തിനാല് പേർ"
+    assert ml("24") == "ഇരുപത്തിനാല്"                                         # no letters: main language
+    # off with mixed=False / {"en": False}; eval itn=True scores in digits instead
+    assert ml("I worked 24 hours", mixed=False) == "i worked ഇരുപത്തിനാല് hours"
+    assert ml("I worked 24 hours", mixed={"en": False}) == "i worked ഇരുപത്തിനാല് hours"
+    assert ml("I worked twenty four hours", itn=True) == "i worked 24 hours"

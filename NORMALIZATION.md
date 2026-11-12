@@ -176,6 +176,15 @@ script, `mixed.py`; today English in Latin script). The main normalizer calls th
 right step and gives them its context (its unit words: `five മിനിറ്റ്`→`5 മിനിറ്റ്`). `mixed=False`
 leaves other scripts to the shared steps; `mixed={"en": {...}}` sets a handler's options.
 
+In **eval** the English handler spells out the digits of a mostly-English sentence in English
+(`I worked 24 hours` → `i worked twenty four hours`, the same 1–7-digit / digit-by-digit split as
+E8), so a written `24` meets a spoken `twenty four` — eval has no ITN, so the spoken form is left
+as written and the digits must come to it. A sentence is English when at least half of its
+letters are Latin (`digits.latin.is_english`, the rule the training targets use); otherwise its
+digits get Malayalam words (`ഞാൻ 24 hours ജോലി ചെയ്തു` → `ഇരുപത്തിനാല് hours`). A sentence with
+no letters goes to the main language. `mixed=False` restores Malayalam words everywhere;
+`itn=True` scores both forms in digits instead.
+
 | Step | `eval` | `train` | `inference` |
 |------|--------|------------|-------------|
 | E12 chillu-conjunct fix (`ൻ്റ`→`ന്റ`) | ✓ | ✓ | ✓ |
@@ -190,7 +199,7 @@ leaves other scripts to the shared steps; `mixed={"en": {...}}` sets a handler's
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
 | **E5 punctuation removal** | strip | strip | **keep** |
 | **E9 English-number words** (Malayalam or Latin script) | — (left as written) | — (left as written) | **→ digits** (read directly by the ITN) |
-| **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit); left as digits with `itn=True` | — (left as digits) | — (left as digits) |
+| **E8 digits** | **→ native words** (≤7 digits as a number incl. thousands/lakhs; 8+ or leading 0 digit-by-digit); in a mostly-English sentence → **English words** (code-mixed handler); left as digits with `itn=True` | — (left as digits) | — (left as digits) |
 | **ITN number words → digits** | opt-in (`itn=True`: score in digits) | — | **✓** (`malayalam_itn` + code-mixed handlers; off with `itn=False`; 1–9 + suffix stays words except ordinals; lone `ഒന്ന്` only in numeric context) |
 | **E10 lowercase** | ✓ | ✓ | **keep case** |
 | **C1 samvruthokaram fold** (`നാലു`→`നാല്`) | ✓ | — (target keeps real spelling) | — (would strip a real `-u` for a reader) |
