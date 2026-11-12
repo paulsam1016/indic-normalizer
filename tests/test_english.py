@@ -78,7 +78,7 @@ def test_inference():
     ("I scored 2.5 points", "I scored two point five points"),
     ("ഞാൻ can't പറഞ്ഞു", "ഞാൻ can not പറഞ്ഞു"),
     ("ഞാൻ 2.5 കിലോ വാങ്ങി", "ഞാൻ രണ്ടര കിലോ വാങ്ങി"),              # Malayalam: the digits module's reading
-    ("21st ന് വരാം", "ഇരുപത്തൊന്നാം ന് വരാം"),
+    ("21st ന് വരാം", "ഇരുപത്തിയൊന്നാം ന് വരാം"),             # glide spelling, as E8 writes integers
     ("4:30 ന് വരാം", "നാലര ന് വരാം"),
     ("ഞാൻ 3.14 എഴുതി", "ഞാൻ മൂന്ന് പോയിന്റ് ഒന്ന് നാല് എഴുതി"),
 ])

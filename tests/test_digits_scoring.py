@@ -255,7 +255,7 @@ def test_cli_text(capsys):
     main(["text", "ഫീസ് 1,75,000 ആണ്.", "--candidates"])
     out = capsys.readouterr().out
     assert out.splitlines()[0] == "ഫീസ് ഒരു ലക്ഷത്തി എഴുപത്തയ്യായിരം ആണ്"
-    assert "[integer]" in out          # train mode already dropped the grouping commas
+    assert "[grouped]" in out          # train mode keeps the grouping for the verbalizer
 
 
 def test_hyp_pad_changes_window(dataset):

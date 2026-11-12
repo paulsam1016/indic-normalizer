@@ -81,6 +81,10 @@ Applied identically to reference and hypothesis:
   this**)
 - chillu / ZWJ-ZWNJ canonicalization, two-part vowel signs, colon→visarga (a built-in port of
   indic-nlp-library's normaliser, identical behaviour; see [Third-party code](#third-party-code))
+- numbers are read **before** their special characters are removed: grouping (`2,000,000` in
+  an English sentence → `two million`, `1,00,000` → `one lakh`), number + suffix (`40-ന്റെ` →
+  `നാൽപ്പതിന്റെ`), times, ranges, dates, fractions (`1/2` → `അര`); train and inference keep
+  group commas as written (`1,75,000`)
 - Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal; an
   apostrophe inside a Latin word joins it (`it's` → `its`, `can't` → `cant`, not `it s`)
 - Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins;
@@ -109,7 +113,8 @@ itn_numbers("ഞാൻ twenty four hours ജോലി ചെയ്തു")    # 
 ```
 
 Latin-script English (`indic_normalizer.languages.english_itn`, also usable on its own) follows
-the same rules as Malayalam-script English, so `two lakh` and `ടൂ ലാക്` both give `2,00,000`,
+the same rules as Malayalam-script English, so `two lakh` and `ടൂ ലാക്` both give `2,00,000`
+(and `two million` / `ടു മില്യൺ` give `2,000,000`: grouped the way the number was said),
 and `thousand six hundred` and `തൗസന്റ് സിക്സ് ഹൺഡ്രഡ്` both give `1600`. It also reads `and`,
 `a hundred`, years (`nineteen ninety five` → `1995`), hyphenated forms and `one o clock` →
 `1 O’Clock`. Ambiguous pairs (`twelve thirty`: a time or a price) stay words. A lone `one` (also a

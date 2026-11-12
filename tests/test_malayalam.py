@@ -298,7 +298,7 @@ def test_w4_hyphenated_variants_converge():
 
 def test_w4_digit_hyphen_not_joined():
     # a numeral + suffix (24-ന്) must NOT fuse; the hyphen falls through to E5 as a separator
-    assert segnorm("24-ന്") == "ഇരുപത്തിനാല് ന്"           # eval: number verbalized, suffix separate
+    assert segnorm("24-ന്") == "ഇരുപത്തിനാലിന്"            # eval: read as number + suffix (E16), not fused by W4
     assert _mal.normalize("24-ന്", mode="train", segmentation=True) == "24-ന്"   # train keeps it (T1)
 
 
@@ -371,12 +371,15 @@ def test_train_mode_canonical_name():
 
 
 # --- Lakh grouping (E7), all modes ---------------------------------------------------
-def test_lakh_grouping_commas_removed_all_modes():
-    assert train("1,75,000 രൂപ") == "175000 രൂപ"
-    assert train("12,50,000") == "1250000"
-    assert train("70,000") == "70000"
-    assert train("1,000,000") == "1000000"
-    assert infer("1,75,000 രൂപ") == "175000 രൂപ"
+def test_grouping_read_before_the_commas_go():
+    # eval: the number is read with its grouping, then the commas go (both forms meet)
+    assert norm("1,75,000 രൂപ") == norm("175000 രൂപ") == norm("ഒരു ലക്ഷത്തി എഴുപത്തിയഞ്ചായിരം രൂപ")
+    assert norm("It is 2,000,000") == "it is two million"           # Western grouping, read as such
+    assert norm("It is 1,00,000") == "it is one lakh"
+    # train keeps the grouping for the external verbalizer; inference leaves digits as written
+    assert train("1,75,000 രൂപ") == "1,75,000 രൂപ"
+    assert train("1,000,000") == "1,000,000"
+    assert infer("1,75,000 രൂപ") == "1,75,000 രൂപ"
     assert train("1,2,3") == "1 2 3"          # a list, not a grouping
 
 

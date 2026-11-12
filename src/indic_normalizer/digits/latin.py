@@ -82,6 +82,21 @@ def words(n: int) -> str:
     return ""
 
 
+def western_words(n: int) -> str:
+    """Western scales, for a number written with Western grouping: 2,000,000 -> two million,
+    100,000 -> one hundred thousand."""
+    for unit, name in ((10**12, "trillion"), (10**9, "billion"), (10**6, "million"), (1000, "thousand")):
+        if n >= unit:
+            q, r = divmod(n, unit)
+            return f"{western_words(q)} {name}" + ("" if r == 0 else " " + western_words(r))
+    return words(n)
+
+
+def western_grouped(s: str) -> bool:
+    """1,00,000 is Indian, 100,000 / 2,000,000 Western (below a lakh the two look the same)."""
+    return bool(re.fullmatch(r"\d{1,3}(?:,\d{3})+", s)) and int(s.replace(",", "")) >= 100_000
+
+
 def digits(s: str) -> str:
     return " ".join(ONES[int(c)] for c in s if c.isdigit())
 
@@ -219,6 +234,8 @@ def candidates(core: str, cls: str) -> List[Candidate]:
     from .detect import to_ascii_digits
     s = to_ascii_digits(core).strip()
     try:
+        if cls == "grouped" and western_grouped(s):     # 2,000,000: said the Western way
+            return [Candidate(western_words(int(s.replace(",", ""))), "en", "latin_western")] + _int(s)
         if cls in ("integer", "grouped", "id_code"):
             return _int(s)
         if cls == "year":

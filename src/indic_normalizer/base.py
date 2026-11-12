@@ -89,6 +89,24 @@ def indian_grouping(n: int) -> str:
     return ",".join([head] + groups + [tail])
 
 
+def western_grouping(n: int) -> str:
+    """How ITN writes a number said with million / billion / trillion: 2,000,000 / 1,200,000."""
+    return f"{n:,}"
+
+
+_COMMA_HOLD = "\ue007"
+
+
+def hold_group_commas(text: str) -> str:
+    """Train: keep a number's group commas through punctuation removal (70,000 stays 70,000), so
+    the external verbalizer can still see how it was grouped (1,00,000 Indian, 100,000 Western)."""
+    return GROUP_COMMA.sub(lambda m: m.group(0).replace(",", _COMMA_HOLD), text)
+
+
+def restore_group_commas(text: str) -> str:
+    return text.replace(_COMMA_HOLD, ",")
+
+
 def drop_group_commas(text: str) -> str:
     """70,000 / 1,75,000 -> 70000 / 175000 (a 1,2,3 list is untouched)."""
     return GROUP_COMMA.sub(lambda m: m.group(0).replace(",", ""), text)
@@ -108,12 +126,12 @@ def fold_digits(text: str) -> str:
 
 
 # A currency sign with its amount (eval): ₹500 / Rs. 500 / INR 500 / $24 / €10 / £5, and 500₹.
-# Group commas are already dropped (E7) when this runs.
-_AMOUNT = r"(\d+(?:\.\d+)?)"
-CURRENCY_BEFORE = re.compile(r"(?i)(?<![\w.])(₹|rs\.?|inr|\$|€|£)\s?" + _AMOUNT + r"(?![\d.]*\d)")
-CURRENCY_AFTER = re.compile(_AMOUNT + r"\s?₹(?!\w)")
+# The amount keeps its group commas (₹70,000 / $2,000,000): E7 runs after the numbers are read.
+_AMOUNT = r"(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+CURRENCY_BEFORE = re.compile(r"(?i)(?<![\w.])(₹|rs\.?|inr|\$|€|£)\s?" + _AMOUNT + r"(?![\d.,]*\d)")
+CURRENCY_AFTER = re.compile(r"(?<![\d,.])" + _AMOUNT + r"\s?₹(?!\w)")
 CURRENCY_SIGN = re.compile("[₹€£¥]")             # a sign left without an amount
-PERCENT_SIGN = re.compile(_AMOUNT + r"\s?%")      # 20% / 2.5 % (eval: -> 20 percent-word)
+PERCENT_SIGN = re.compile(r"(?<![\d,.])" + _AMOUNT + r"\s?%")   # 20% / 2.5 % (eval: -> 20 percent-word)
 CURRENCY_KEY = {"₹": "inr", "rs": "inr", "rs.": "inr", "inr": "inr", "$": "usd", "€": "eur", "£": "gbp"}
 
 

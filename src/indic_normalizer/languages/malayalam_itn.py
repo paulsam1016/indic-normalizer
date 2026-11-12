@@ -26,6 +26,7 @@ from functools import lru_cache
 from typing import List, Optional, Tuple
 
 from ..base import indian_grouping as _indian   # shared with english_itn
+from ..base import western_grouping
 from ..digits import ml as _d
 from . import malayalam as _m
 
@@ -119,6 +120,11 @@ def native_value(word: str) -> Optional[float]:
 
 
 # English number words (Malayalam script): the digits tables + spellings seen in base-model output
+EN_WESTERN_MILLION = ("മില്യൺ", "മില്ല്യൺ", "മില്യൻ", "മില്യൺസ്")
+EN_WESTERN_BILLION = ("ബില്യൺ", "ബില്ല്യൺ", "ബില്യൻ", "ബില്യൺസ്")
+EN_WESTERN = set(EN_WESTERN_MILLION) | set(EN_WESTERN_BILLION)       # -> 2,000,000 grouping
+
+
 def _en_tables():
     unit = dict(_m._EN_UNIT)
     unit.update({w: i for i, w in enumerate(_d.EN_ONES) if w not in ("ടു", "ഫോർ")})
@@ -130,6 +136,8 @@ def _en_tables():
     mult.update({w: 1000 for w in _m._EN_THOU | {_d.EN_THOUSAND}})
     mult.update({w: 100_000 for w in ("ലാക്", "ലാക്ക്", "ലാക്സ്", "ലാഖ്", "ലാഖ്സ്")})
     mult.update({w: 10_000_000 for w in ("ക്രോർ", "ക്രോഴ്സ്", "ക്രോർസ്")})
+    mult.update({w: 1_000_000 for w in EN_WESTERN_MILLION})
+    mult.update({w: 1_000_000_000 for w in EN_WESTERN_BILLION})
     return unit, teen, ten, mult
 
 
@@ -445,7 +453,7 @@ def _english(toks, i):
         body = "".join(out) if used or _fuse_digits(out) else " ".join(out)
         return j, body + ("-" + _show_suffix(sfx) if sfx else "")
     nums, total, cur, seen, unit_done = [], 0, 0, False, False
-    k_flag = ord_flag = False
+    k_flag = ord_flag = west_flag = False
     last_big = 0                                              # scale of the last thousand / lakh / crore
 
     def nonlocal_reset():
@@ -453,11 +461,12 @@ def _english(toks, i):
         last_big = 0
 
     def flush():
-        nonlocal total, cur, seen, unit_done, k_flag, ord_flag
+        nonlocal total, cur, seen, unit_done, k_flag, ord_flag, west_flag
         if seen:
             v = total + cur
-            nums.append((f"{v}k" if k_flag else (f"{v}{_ord_suffix(v)}" if ord_flag else _fmt(v))))
-        total, cur, seen, unit_done, k_flag, ord_flag = 0, 0, False, False, False, False
+            plain = western_grouping(v) if west_flag and isinstance(v, int) else _fmt(v)
+            nums.append((f"{v}k" if k_flag else (f"{v}{_ord_suffix(v)}" if ord_flag else plain)))
+        total, cur, seen, unit_done, k_flag, ord_flag, west_flag = 0, 0, False, False, False, False, False
         nonlocal_reset()
 
     for t in run:
@@ -491,6 +500,8 @@ def _english(toks, i):
             cur += v
             seen, ord_flag = True, True
         elif kind == "mult":
+            if t.core in EN_WESTERN or (v == 1000 and cur >= 100):
+                west_flag = True                              # മില്യൺ / ഫൈവ് ഹൺഡ്രഡ് തൗസന്റ്: 500,000
             if v >= 1000 and last_big and v >= last_big:     # ടെൻ തൗസന്റ് ഫിഫ്റ്റീൻ തൗസന്റ്: two numbers
                 keep = cur
                 cur = 0

@@ -46,7 +46,8 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
     text = base.strip_unk(text)
     text = base.strip_zero_width(text)
     text = base.fold_digits(text)
-    text = base.drop_group_commas(text)                # E7: 1,000 / 1,75,000 -> one number
+    # E7 (group commas) is not done here: eval reads the grouping first (2,000,000 -> two
+    # million), train keeps it for the external verbalizer, inference leaves it as written.
 
     if mode == "inference":
         if itn:
@@ -61,8 +62,12 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
             text = base.drop_group_commas(_itn(text, spell_small=opts.spell_small))
             text = _EN.currency(text, opts, every=True)   # ITN writes 20%: 20 percent again
         else:
-            text = _EN.verbalize(text, opts, every=True)  # E8: numbers -> English words
+            text = _EN.verbalize(text, opts, every=True)  # E8: numbers -> English words (grouping read)
+        text = base.drop_group_commas(text)            # E7
+    else:
+        text = base.hold_group_commas(text)            # train: 70,000 / 100,000 kept for the verbalizer
     text = base.join_apostrophes(text)                 # E14: John's -> johns, it's -> its (train)
     text = base.strip_punct(text)                      # E5
+    text = base.restore_group_commas(text)
     text = text.lower()                                # E10
     return base.collapse_space(text)                   # E11

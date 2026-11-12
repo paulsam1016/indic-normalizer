@@ -20,11 +20,11 @@ def test_itn_numbers(text, expected):
 
 
 def test_only_numbers_change():
-    # normalize(mode="inference") also drops tags / ⁇ and folds Indic digits and group commas;
-    # itn_numbers does not.
+    # normalize(mode="inference") also drops tags / ⁇ and folds Indic digits; itn_numbers does
+    # not. Neither drops group commas (digits are left as written).
     text = "<noise> ⁇ ൨൪ 70,000"
     assert itn_numbers(text) == text
-    assert normalize(text, mode="inference") == "24 70000"
+    assert normalize(text, mode="inference") == "24 70,000"
 
 
 # --- digit-by-digit runs: a code (4+ digits, or a zero, or ഡബിൾ / ട്രിപ്പിൾ) is one number;
