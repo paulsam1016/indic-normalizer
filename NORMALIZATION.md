@@ -250,6 +250,9 @@ five` / `നൈന്റീൻ നൈന്റി ഫൈവ്`→`1995`, first 
 adjacent numbers below 100 that do not combine (`twelve thirty` / `ട്വൽവ് തേർട്ടി`: a time, a
 price or a range) stay words. Latin also reads `and` (`one hundred and five`→`105`), `a hundred`,
 hyphenated forms (`twenty-five thousand`→`25000`) and o'clock (`one o clock`→`1 O’Clock`).
+Grouping follows how the number was said: Indian from one lakh up for lakh / crore
+(`two lakh`→`2,00,000`), Western for million / billion and for a lakh or more counted in thousands
+(`two million` / `ടു മില്യൺ`→`2,000,000`, `five hundred thousand`→`500,000`); plain below that.
 Differences that come from the script: a lone Latin `one` (also a pronoun) needs number context,
 like `ഒന്ന്` (`one day`→`1 day`, `one of them` stays); Latin `two` / `four` are never "to" /
 "for" (`ടു` / `ഫോർ` are); `twenty second` is 22nd in Latin but `ട്വന്റി സെക്കൻഡ്` is 20 seconds

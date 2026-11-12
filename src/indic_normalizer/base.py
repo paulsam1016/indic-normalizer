@@ -89,6 +89,11 @@ def indian_grouping(n: int) -> str:
     return ",".join([head] + groups + [tail])
 
 
+def western_grouping(n: int) -> str:
+    """How ITN writes a number said with million / billion / trillion: 2,000,000 / 1,200,000."""
+    return f"{n:,}"
+
+
 def drop_group_commas(text: str) -> str:
     """70,000 / 1,75,000 -> 70000 / 175000 (a 1,2,3 list is untouched)."""
     return GROUP_COMMA.sub(lambda m: m.group(0).replace(",", ""), text)

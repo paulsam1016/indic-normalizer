@@ -5,8 +5,9 @@ Spoken -> written numbers, for the Latin-script English in code-mixed Malayalam 
 this module reads ``twenty four`` and writes numbers the same way:
 
 * cardinals: "twenty four" -> 24, "one hundred and five" -> 105, "thousand six hundred" -> 1600,
-  "a hundred" -> 100, Indian and Western scales ("three lakh" -> 3,00,000, "two million" ->
-  20,00,000; grouped from one lakh up), hyphenated ("twenty-five thousand" -> 25000), the k form
+  "a hundred" -> 100, Indian and Western scales, grouped the way they were said ("three lakh" ->
+  3,00,000, "two million" -> 2,000,000; plain below one lakh / one million), hyphenated
+  ("twenty-five thousand" -> 25000), the k form
   ("twenty k" -> 20k); a repeated scale starts a new number ("ten thousand fifteen thousand" ->
   10000 15000)
 * ordinals: "twenty first" -> 21st, "hundredth" -> 100th
@@ -38,7 +39,7 @@ from __future__ import annotations
 import re
 from typing import Callable, List, Optional, Tuple
 
-from ..base import indian_grouping
+from ..base import indian_grouping, western_grouping
 
 UNITS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
          "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
@@ -47,6 +48,8 @@ TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50, "six
         "eighty": 80, "ninety": 90}
 SCALES = {"thousand": 10**3, "lakh": 10**5, "lakhs": 10**5, "lac": 10**5, "lacs": 10**5, "million": 10**6,
           "crore": 10**7, "crores": 10**7, "billion": 10**9, "trillion": 10**12}
+WESTERN = {"million", "billion", "trillion", "millionth", "billionth"}   # -> 2,000,000 grouping
+INDIAN = {"lakh", "lakhs", "lac", "lacs", "crore", "crores"}
 BARE_OK = {"thousand"}                           # a scale that means 1 x scale with no count before it
 ORD_UNITS = {"zeroth": 0, "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7,
              "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12, "thirteenth": 13,
@@ -333,7 +336,12 @@ def itn_tokens(tokens: List[str], *, spell_small: bool = True,
                 elif ordinal:
                     text = f"{value}{_ordinal_suffix(value)}"
                 else:
-                    text, is_plain = indian_grouping(value), True
+                    # said the Western way (million / billion, or a lakh or more counted in
+                    # thousands: five hundred thousand): 2,000,000 / 500,000; else Indian
+                    said = w[i:i + used]
+                    western = any(x in WESTERN for x in said) or (
+                        value >= 100_000 and "thousand" in said and not any(x in INDIAN for x in said))
+                    text, is_plain = (western_grouping(value) if western else indian_grouping(value)), True
                 j = i + used
                 second = _parse_cardinal(w[j:lim]) if is_plain and value < 100 and j < lim else None
                 k2 = j + second[1] if second else j

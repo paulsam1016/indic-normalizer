@@ -27,7 +27,13 @@ from indic_normalizer.languages.malayalam import itn_numbers
     ("a lakh", "1,00,000"),
     ("lakh fifty thousand", "1,50,000"),
     ("three lakh fifty thousand", "3,50,000"),
-    ("two million", "20,00,000"),
+    ("two million", "2,000,000"),                     # said the Western way: Western grouping
+    ("one million two hundred thousand", "1,200,000"),
+    ("a million", "1,000,000"),
+    ("three billion", "3,000,000,000"),
+    ("five hundred thousand", "500,000"),              # a lakh+ counted in thousands
+    ("one lakh twenty thousand", "1,20,000"),          # said the Indian way: Indian grouping
+    ("ninety nine thousand", "99000"),                 # plain below a lakh
     ("twenty-five thousand", "25000"),
     ("Twenty-Four", "24"),
     ("twenty k", "20k"),
@@ -153,6 +159,10 @@ def test_latin_and_malayalam_script_agree(n):
     ("two point five", "ടു പോയിന്റ് ഫൈവ്", "2.5"),
     ("double five", "ഡബിൾ ഫൈവ്", "55"),
     ("third", "തേർഡ്", "3rd"),
+    ("two million", "ടു മില്യൺ", "2,000,000"),
+    ("one million two hundred thousand", "വൺ മില്യൺ ടു ഹൺഡ്രഡ് തൗസന്റ്", "1,200,000"),
+    ("five billion", "ഫൈവ് ബില്യൺ", "5,000,000,000"),
+    ("five hundred thousand", "ഫൈവ് ഹൺഡ്രഡ് തൗസന്റ്", "500,000"),
     ("nineteen oh five", "നൈന്റീൻ ഓ ഫൈവ്", "1905"),          # oh / ഓ said as zero
     ("four oh five", "ഫോർ ഓ ഫൈവ്", "405"),
     ("double oh seven", "ഡബിൾ ഓ സെവൻ", "007"),

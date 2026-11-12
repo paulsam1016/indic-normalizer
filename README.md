@@ -109,7 +109,8 @@ itn_numbers("ഞാൻ twenty four hours ജോലി ചെയ്തു")    # 
 ```
 
 Latin-script English (`indic_normalizer.languages.english_itn`, also usable on its own) follows
-the same rules as Malayalam-script English, so `two lakh` and `ടൂ ലാക്` both give `2,00,000`,
+the same rules as Malayalam-script English, so `two lakh` and `ടൂ ലാക്` both give `2,00,000`
+(and `two million` / `ടു മില്യൺ` give `2,000,000`: grouped the way the number was said),
 and `thousand six hundred` and `തൗസന്റ് സിക്സ് ഹൺഡ്രഡ്` both give `1600`. It also reads `and`,
 `a hundred`, years (`nineteen ninety five` → `1995`), hyphenated forms and `one o clock` →
 `1 O’Clock`. Ambiguous pairs (`twelve thirty`: a time or a price) stay words. A lone `one` (also a
