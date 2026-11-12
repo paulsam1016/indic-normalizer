@@ -38,13 +38,15 @@ from .registry import get_normalizer, script_of
 __version__ = "0.2.0"
 
 
-def normalize(text, lang=None, mode="eval", segmentation=False):
+def normalize(text, lang=None, mode="eval", segmentation=False, itn=True):
     """One-shot normalize ``text`` for ``lang``/``mode`` (universal normalizer if no lang).
 
-    ``segmentation`` (eval-only, default OFF) enables the W3/W4/W5 boundary rules. The
+    ``segmentation`` (eval-only, default OFF) enables the W3/W4/W5 boundary rules. ``itn``
+    (inference-only, default ON): False keeps number words as written (punctuation + case
+    still preserved). The
     C2/C6 CER folds run in every mode; C1 in eval only.
     """
-    fn, _ = get_normalizer(lang, mode=mode, segmentation=segmentation)
+    fn, _ = get_normalizer(lang, mode=mode, segmentation=segmentation, itn=itn)
     return fn(text)
 
 

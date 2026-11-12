@@ -29,16 +29,16 @@ from . import base
 _resolve_mode = base.resolve_mode
 
 
-def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
+def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn: bool = True) -> str:
     """Script-, (mode-dependent) punctuation- and case-insensitive normalization.
 
     mode="eval" (default) and mode="train" strip punctuation and lowercase;
     mode="inference" preserves both for a readable transcript. Encoding/digit/whitespace
-    canonicalization is identical in both. ``segmentation`` is accepted for a uniform API but
-    has no effect here (the universal normalizer has no per-language rules).
+    canonicalization is identical in both. ``segmentation`` and ``itn`` are accepted for a uniform
+    API but have no effect here (the universal normalizer has no per-language or number rules).
     """
     mode = _resolve_mode(mode)
-    _ = segmentation  # accepted for API parity; universal has no W-family rules
+    _ = segmentation, itn  # accepted for API parity; universal has no W-family or number rules
     text = base.to_nfc(text)
     text = base.strip_unk(text)
     text = base.strip_zero_width(text)

@@ -430,7 +430,7 @@ def test_inference_lone_one_is_a_word():
 def test_inference_lone_one_numeric_context():
     assert infer("ഒന്ന് രൂപ") == "1 രൂപ"
     assert infer("ഒന്ന് ഇയർ ആയി") == "1 ഇയർ ആയി"
-    assert infer("ഒന്ന് രണ്ട് മൂന്ന്") == "123"
+    assert infer("ഒന്ന് രണ്ട് മൂന്ന്") == "1 2 3"          # counting: separate digits (_fuse_digits)
     assert infer("വൺ") == "1"
 
 

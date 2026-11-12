@@ -554,6 +554,7 @@ def _is_numberish(core: str) -> bool:
     if core[0].isdigit() or core in _ONE2DIGIT or core in _WORD2NUM or core in _EN_ANY:
         return True
     from . import malayalam_itn as _itn          # every spelling the digits module writes
+    core = _itn.fold_spelling(core)              # + the variants ITN reads (ഒൻപത്)
     if core in _itn._combining() or _itn._word_info(core) is not None or _itn.split_suffix(core):
         return True
     return core.endswith("ു") and (core[:-1] + _VIRAMA) in _WORD2NUM   # രണ്ടു, ആറു
@@ -601,7 +602,7 @@ def _protect_num_punct(text: str) -> str:
 _COLON_HOLD = "\ue000"
 
 
-def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
+def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn: bool = True) -> str:
     """Normalize Malayalam ASR text; see module docstring and NORMALIZATION.md (mode selector).
 
     mode="eval" (default; alias "evaluation") — WER/CER scoring: strip punctuation, lowercase,
@@ -619,6 +620,10 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
     are OFF by default because on the measured corpora they are net-neutral-to-slightly-
     negative (the boundary variants they target are rare, and each occasionally introduces a
     new mismatch); enable when a corpus is known to benefit. No effect in inference mode.
+
+    itn (inference only, default ON) — number words -> digits. itn=False gives the inference
+    canonicalization alone: punctuation and case kept, number words left as written. No effect
+    in eval / train.
 
     The CER folds C6 (homoglyph ഠ->0 in a number) and C2 (word-final മ് -> ം) run in BOTH modes
     (both unambiguous). C1 (word-final samvruthokaram ...ു്/...ു -> ...്) runs in EVAL ONLY — it
@@ -669,9 +674,10 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
     # Existing digits are left exactly as written (4:00-5:00 stays 4:00-5:00). One ITN pass
     # (malayalam_itn) turns every number WORD into digits: native in every spelling the digits
     # module writes, English in Malayalam script, lakhs / crores, suffixes, decimals, percent.
-    text = _hold_lone_one(text)                    # I1:  standalone ഒന്ന് = "just/once", not 1
-    text = _to_digits(text)                        # ITN: number words -> digits
-    text = text.replace(_ONE_HOLD, "ഒന്ന്").replace(_ONEU_HOLD, "ഒന്നു")
+    if itn:
+        text = _hold_lone_one(text)                # I1:  standalone ഒന്ന് = "just/once", not 1
+        text = _to_digits(text)                    # ITN: number words -> digits
+        text = text.replace(_ONE_HOLD, "ഒന്ന്").replace(_ONEU_HOLD, "ഒന്നു")
     return _SPACE.sub(" ", text).strip()           # E11 (punctuation + case preserved)
 
 

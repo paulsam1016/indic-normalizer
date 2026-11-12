@@ -140,7 +140,7 @@ def _au_variants(table: dict) -> dict:
 
 
 EN_UNIT, EN_TEEN, EN_TEN, EN_MULT = map(_au_variants, _en_tables())
-EN_AMBIG = {"ടു": 2, "ഫോർ": 4}                  # also "to" / "for": need an unambiguous neighbour
+EN_AMBIG = {"ടു": 2, "ടൂ": 2, "ഫോർ": 4}        # also "to" / "too" / "for": need an unambiguous neighbour
 EN_REPEAT = {"ഡബിൾ": 2, "ട്രിപ്പിൾ": 3}         # in a digit run: ഡബിൾ ഫൈവ് -> 55
 EN_K = "കെ"                                      # ട്വന്റി കെ -> 20k
 ORD_LONE_NO = {"ഫസ്റ്റ്", "സെക്കൻഡ്"}            # first / a second: only after a tens word
@@ -166,6 +166,29 @@ LAKH_WORDS = {_d.LAKH: (100_000, False), _d.LAKH_C: (100_000, True), _d.CRORE: (
 POINT = {"പോയിന്റ്"}
 PERCENT = {"ശതമാനം", "പെർസെന്റ്", "പെർസെന്റേജ്", "പെഴ്സന്റ്", "പെർസന്റ്"}
 TIME_WORD = "മണി"
+
+# Spellings people and ASR models write that the generator does not (it follows one spelling
+# policy; see ALT_SUBS in digits.ml). Folded to the generator's spelling for LOOKUP only, so a
+# number written ഒൻപത് / അൻപത് / നാല്പത് reads back; the generator's own output is unchanged.
+SPELLING_FOLD = (("ൻപത", "മ്പത"),                     # ഒൻപത് 9, അൻപത് 50, ഇരുപത്തൊൻപത് 29
+                 ("നാല്പ്പത", "നാൽപ്പത"), ("നാല്പത", "നാൽപ്പത"), ("നാൽപത", "നാൽപ്പത"),   # 40
+                 ("എമ്പത", "എൺപത"),                     # 80
+                 ("ഇരുന്നൂറ", "ഇരുനൂറ"))                  # 200
+
+
+def fold_spelling(word: str) -> str:
+    for a, b in SPELLING_FOLD:
+        if a in word:
+            word = word.replace(a, b)
+    return word
+
+
+def _fuse_digits(digits: List[str]) -> bool:
+    """A run of digits read one by one is a code (phone, OTP, PIN, 007) when it is 4+ long or has
+    a zero: then it is written as one number. Shorter runs are written as separate digits, since
+    രണ്ട് മൂന്ന് പേർ is "two or three people" (2 3), not 23, and ഒന്ന് രണ്ട് മൂന്ന് is counting."""
+    return len(digits) >= 4 or "0" in digits
+
 
 # ------------------------------------------------------------------------------ suffixes
 
@@ -262,7 +285,8 @@ class _Tok:
 
     def __init__(self, raw):
         self.raw = raw
-        self.lead, self.core, self.trail = _m._peel(raw)
+        self.lead, core, self.trail = _m._peel(raw)
+        self.core = fold_spelling(core)
         self.info, self.sfx = None, ""
         c = self.core
         if not c or c[0].isascii():
@@ -401,17 +425,20 @@ def _english(toks, i):
     if run[0].core == EN_K or (len(run) == 1 and run[0].kind == "en" and run[0].info[1] == "ord"
                                and run[0].core in ORD_LONE_NO):
         return None
+    if all(t.kind == "en" and t.info[1] == "mult" and t.info[2] >= 100_000 for t in run):
+        return None                                           # a bare ലാക് / ക്രോർ: no count, a word
     # digit by digit (codes, phone numbers): units / to / for / double / triple only
     if len(run) >= 2 and all(t.core in EN_REPEAT or t.kind == "en" and t.info[1] in ("unit", "ambig") for t in run):
-        out, rep = [], 1
+        out, rep, used = [], 1, False
         for t in run:
             if t.core in EN_REPEAT:
-                rep = EN_REPEAT[t.core]
+                rep, used = EN_REPEAT[t.core], True
                 continue
             out.append(str(t.info[2]) * rep)
             rep = 1
         sfx = run[-1].sfx
-        return j, "".join(out) + ("-" + _show_suffix(sfx) if sfx else "")
+        body = "".join(out) if used or _fuse_digits(out) else " ".join(out)
+        return j, body + ("-" + _show_suffix(sfx) if sfx else "")
     nums, total, cur, seen, unit_done = [], 0, 0, False, False
     k_flag = ord_flag = False
     last_big = 0                                              # scale of the last thousand / lakh / crore
@@ -529,14 +556,15 @@ def itn(text: str) -> str:
             out.append(t.lead + digits + toks[j - 1].trail)
             i = j
             continue
-        # digit-by-digit runs of native single digits (പൂജ്യം പൂജ്യം ഏഴ് -> 007)
+        # digit-by-digit runs of native single digits (പൂജ്യം പൂജ്യം ഏഴ് -> 007; see _fuse_digits)
         if t.kind == "ml" and t.core in _d.ONES and not t.sfx:
             j = i
             while j < len(toks) and toks[j].kind == "ml" and toks[j].core in _d.ONES and not toks[j].sfx \
                     and (j == i or not toks[j].lead) and (j == i or not toks[j - 1].trail):
                 j += 1
             if j - i >= 2:
-                out.append(t.lead + "".join(str(x.info[1]) for x in toks[i:j]) + toks[j - 1].trail)
+                ds = [str(x.info[1]) for x in toks[i:j]]
+                out.append(t.lead + ("".join(ds) if _fuse_digits(ds) else " ".join(ds)) + toks[j - 1].trail)
                 i = j
                 continue
         # X-ഏ YY (ഒന്നേ അമ്പത്തഞ്ച്): ambiguous shorthand, both stay words

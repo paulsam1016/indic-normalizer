@@ -43,14 +43,15 @@ def _load(code):
     return None
 
 
-def get_normalizer(lang=None, mode="eval", segmentation=False):
+def get_normalizer(lang=None, mode="eval", segmentation=False, itn=True):
     """``(normalize_fn, source)`` for ``lang``/``mode``; universal normalizer as fallback.
 
-    ``normalize_fn`` is ``fn(text)`` with ``mode`` and ``segmentation`` bound. ``mode`` is
+    ``normalize_fn`` is ``fn(text)`` with ``mode``, ``segmentation`` and ``itn`` bound. ``mode`` is
     validated eagerly here (so a bad mode fails at ``get_normalizer`` time, not on first
     call), then bound via ``functools.partial``. ``segmentation`` (eval-only, default OFF)
-    turns on the W3/W4/W5 boundary rules for languages that have them. The C1/C2/C6 CER folds
-    run automatically in eval mode (no flag).
+    turns on the W3/W4/W5 boundary rules for languages that have them. ``itn`` (inference-only,
+    default ON) turns number words into digits; False keeps them as written. The C1/C2/C6 CER
+    folds run automatically in eval mode (no flag).
     """
     base_fn, source = universal.normalize, "indic_normalizer.universal"
     code = _lang_code(lang)
@@ -62,7 +63,7 @@ def get_normalizer(lang=None, mode="eval", segmentation=False):
     module = base_fn.__module__
     import importlib
     importlib.import_module(module)._resolve_mode(mode)
-    return partial(base_fn, mode=mode, segmentation=segmentation), source
+    return partial(base_fn, mode=mode, segmentation=segmentation, itn=itn), source
 
 
 # --- optional: Unicode-block script detection (script routing, NOT language ID) ------
