@@ -111,7 +111,7 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
 | # | Item | Effect | Complexity | Notes |
 |---|------|--------|:----------:|-------|
 | E1 | Unicode NFC | CER | ★ trivial | Canonical composition — stdlib `unicodedata.normalize`. |
-| E2 | Chillu / ZWJ-ZWNJ canonicalization | CER | ★ trivial | One call into indic-nlp-library (a required dependency); the library does the work. Punctuation colons are shielded from its colon→visarga rewrite (see Mode selector, colon guard). |
+| E2 | Chillu / ZWJ-ZWNJ canonicalization | CER | ★ trivial | One call into a built-in port of indic-nlp-library's normaliser (identical behaviour), which does the work. Punctuation colons are shielded from its colon→visarga rewrite (see Mode selector, colon guard). |
 | E3 | `⁇` / `<unk>` removal | CER + WER | ★ trivial | OOV marker; fixed-string removal from both sides. |
 | E4 | Zero-width (ZWNJ/ZWJ/BOM) drop | CER | ★ trivial | Fixed codepoint set stripped, after the chillu fix. |
 | E5 | ASCII + Indic punctuation removal | CER + WER | ★ trivial | One character-class regex; includes danda `।` `॥`, quotes, dashes. |
@@ -267,7 +267,7 @@ run automatically. C3/C4/C5 remain gaps.
 | C5 | **Foreign-word transliteration variants** (`ഫോൺ`/`ഫോണ്`, `ബസ്`/`ബസ്സ്`) | Same borrowed word, different spelling. | **★★★ moderate** | *Gap.* Curated canonical-spelling lexicon for frequent borrowings — inherently a hand-built list, no regex. |
 | C4 | **Long-vowel / gemination spelling drift** (`ാ` vs `ാാ`, `ക്ക` vs `ക`) | Casual-transcription doubling/undoubling. | **★★★★ hard** | *Gap.* Gemination is *contrastive* in Malayalam (`കല` art vs `കല്ല` stone), so no blanket `CC→C` rule is safe — needs a conservative per-word whitelist. |
 | <a name="c8"></a>C8 | **Bare (ZWJ-less) word-final chillu** — `consonant + virama` word-finally may not unify with atomic chillu. | Legacy/IME chillu without ZWJ mismatches an atomic-chillu reference. | **★ trivial** | *Not implemented (dropped by request).* Would be a 6-entry word-final map (`ന്`→`ൻ`, …), the inverse of E12. |
-| <a name="c7"></a>C7 | ~~indic-nlp fallback parity gap~~ **RESOLVED** — colon→visarga and two-part vowel-sign composition used to fire only when indic-nlp-library was installed. | (was) an environment-dependent CER difference. | — (done) | **Fixed** by making `indic-nlp-library` a **hard dependency**. Single code path now; no parity gap remains. |
+| <a name="c7"></a>C7 | ~~indic-nlp fallback parity gap~~ **RESOLVED** — colon→visarga and two-part vowel-sign composition used to fire only when indic-nlp-library was installed. | (was) an environment-dependent CER difference. | — (done) | **Fixed**: indic-nlp-library's normaliser is now always available, as a built-in port of it (identical behaviour). Single code path; no parity gap remains. |
 
 > **C1/C2 measured impact.** Unlike the W-family, the endings folds **help on every measured
 > cell**: dataset **WER −1.09**, CER −0.14; calls WER −0.21, CER −0.06 (per-rule, C1 does most
@@ -341,7 +341,8 @@ Pair it with pinned regression cases for the crown-jewel rules: `വിവേക
 
 0. **Guardrail test** (above) — cheap, protects the wins already banked; prevents silently
    reintroducing the vanishing-vowels bug. (C7 fallback-parity is already **resolved** —
-   indic-nlp-library is now a hard dependency, so there is a single code path.)
+   indic-nlp-library's normaliser is built in (a port with identical behaviour), so there is a
+   single code path.)
 1. **W1 + W3** (postposition split-merge + acronym/letter-sequence collapse) — biggest WER-side wins.
 2. **C1 + C2** (samvruthokaram + anusvara) — biggest CER-side wins per line of code, since they
    touch most word endings.
@@ -376,10 +377,10 @@ The reference Malayalam normalizers and what each actually does, evaluated for t
 | capability | ours | indic-nlp-library | libindic/normalizer | whisper_normalizer |
 |---|---|---|---|---|
 | NFC (E1) | ✅ | ➖ does own | ➖ | ➖ |
-| chillu ZWJ-seq → atomic (E2) | ✅ via indic-nlp | ✅ default | ✅ | ✅ |
+| chillu ZWJ-seq → atomic (E2) | ✅ built-in port of indic-nlp-library's normaliser (identical behaviour) | ✅ default | ✅ | ✅ |
 | **`ൻ്റ→ന്റ` conjunct (E12)** | ✅ **unique** | ❌ | ❌ | ❌ |
-| two-part vowel signs (`ൊ ോ ൌ`) | ✅ via indic-nlp (required) | ✅ | ✅ | ✅ |
-| colon → visarga | ✅ via indic-nlp (required) | ✅ | ✅ | ✅ |
+| two-part vowel signs (`ൊ ോ ൌ`) | ✅ built-in port of indic-nlp-library's normaliser (identical behaviour) | ✅ | ✅ | ✅ |
+| colon → visarga | ✅ built-in port of indic-nlp-library's normaliser (identical behaviour) | ✅ | ✅ | ✅ |
 | Indic danda `।॥` removed (E5) | ✅ | ➖ | ❌ ASCII-only | ➖ |
 | Indic digit → ASCII (E6) | ✅ | ❌ | ❌ | ❌ |
 | **digit verbalization (E8)** | ✅ **unique** | ❌ | ❌ | ❌ |
@@ -388,8 +389,9 @@ The reference Malayalam normalizers and what each actually does, evaluated for t
 | opinionated typo/spelling "fix" | ❌ correctly avoids | ➖ opt-in | ⚠️ **on by default** | ➖ |
 
 Notes:
-- **indic-nlp-library** (Anoop Kunchukuttan, MIT) — the de-facto standard and our required
-  backend. Its `MalayalamNormalizer` composes legacy ZWJ chillu → atomic (default on),
+- **indic-nlp-library** (Anoop Kunchukuttan, MIT) — the de-facto standard and our
+  backend, built in as a port of its Malayalam normaliser (`_indicnlp_ml.py`, identical
+  behaviour for the default configuration; MIT notice kept). Its `MalayalamNormalizer` composes legacy ZWJ chillu → atomic (default on),
   does two-part vowels / poorna-virama / colon→visarga (default on), and `റ്റ→ട്ട` +
   reverse chillu decomposition (default **off**). Does **not** handle E12.
 - **libindic/normalizer** (Santhosh Thottingal / SMC, LGPL) — YAML-rule driven; removes

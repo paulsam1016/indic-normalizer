@@ -34,7 +34,7 @@ def _lang_code(lang):
 def _load(code):
     """Import and return ``(normalize_fn, source)`` for a registered code, or None.
 
-    Lazy so a heavy per-language dependency (e.g. indic-nlp-library) only loads when
+    Lazy so a per-language module (and any heavy dependency it has) only loads when
     that language is actually used.
     """
     if code == "ml":

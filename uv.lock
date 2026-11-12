@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
@@ -1172,14 +1172,12 @@ wheels = [
 
 [[package]]
 name = "indic-normalizer"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
-dependencies = [
-    { name = "indic-nlp-library" },
-]
 
 [package.optional-dependencies]
 dev = [
+    { name = "indic-nlp-library" },
     { name = "pytest" },
 ]
 digits = [
@@ -1192,7 +1190,7 @@ digits = [
 
 [package.metadata]
 requires-dist = [
-    { name = "indic-nlp-library", specifier = ">=0.92" },
+    { name = "indic-nlp-library", marker = "extra == 'dev'", specifier = ">=0.92" },
     { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'digits'", specifier = "==3.0.0" },
     { name = "numpy", marker = "extra == 'digits'", specifier = ">=1.22" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },

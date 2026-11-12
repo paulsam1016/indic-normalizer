@@ -15,7 +15,7 @@ design, coverage/gap analysis, and sources.
 ## Install
 
 ```bash
-pip install indic-normalizer            # pulls indic-nlp-library (required)
+pip install indic-normalizer            # no runtime dependencies
 ```
 
 Editable, from a local checkout:
@@ -54,13 +54,21 @@ Applied identically to reference and hypothesis:
 
 - mis-encoded chillu-conjunct fix (`ൻ്റ → ന്റ`, NFC-invisible — **no other library does
   this**)
-- chillu / ZWJ-ZWNJ canonicalization, two-part vowel signs, colon→visarga (via
-  indic-nlp-library, a required dependency)
+- chillu / ZWJ-ZWNJ canonicalization, two-part vowel signs, colon→visarga (a built-in port of
+  indic-nlp-library's normaliser, identical behaviour; see [Third-party code](#third-party-code))
 - Unicode NFC, `<unk>`/`⁇` removal, ASCII + Indic punctuation (incl. danda) removal
 - Indic-digit → ASCII, then **digit verbalization** (`24 → ഇരുപത്തിനാല്`) with sandhi joins
 - **English↔Malayalam number canonicalization** (`ട്വൻറ്റി ഫോർ`/`24`/`ഇരുപത്തിനാല്` all
   collapse to one form)
 - lowercase (code-mixed English), whitespace collapse
+
+Number words to digits only, with no punctuation, case or other changes (the ITN step of
+`mode="inference"` on its own):
+
+```python
+from indic_normalizer.languages.malayalam import itn_numbers
+itn_numbers("ഇരുനൂറ്റമ്പത് രൂപ, ഒന്ന് നോക്ക്!")   # -> '250 രൂപ, ഒന്ന് നോക്ക്!'
+```
 
 ## Digits module (`indic_normalizer.digits`)
 
@@ -164,6 +172,16 @@ pass it.
 pip install -e ".[dev]"
 pytest
 ```
+
+The `dev` extra includes indic-nlp-library, used only by the test that checks the built-in port
+against it (that test skips without it).
+
+## Third-party code
+
+`src/indic_normalizer/_indicnlp_ml.py` is a port of the Malayalam normaliser from
+[indic-nlp-library](https://github.com/anoopkunchukuttan/indic_nlp_library) 0.92
+(MIT, © 2013-present Anoop Kunchukuttan), restricted to the default configuration this package
+uses. Its MIT notice is kept in the file header.
 
 ## License
 

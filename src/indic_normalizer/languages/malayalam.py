@@ -3,8 +3,8 @@ Malayalam ASR text normalization for WER/CER scoring.
 
 Applied identically to reference AND hypothesis, so scores aren't inflated by
 convention/encoding differences. normalize() does: mis-encoded chillu-conjunct fix
-(ൻ്റ→ന്റ, NFC-invisible), chillu / ZWJ-ZWNJ canonicalization (via indic-nlp-library, a
-hard dependency), Unicode NFC, <unk>('⁇') + punctuation removal, Indic-digit → ASCII,
+(ൻ്റ→ന്റ, NFC-invisible), chillu / ZWJ-ZWNJ canonicalization (indic-nlp-library's normaliser, built
+in), Unicode NFC, <unk>('⁇') + punctuation removal, Indic-digit → ASCII,
 digit verbalization, English↔Malayalam number canonicalization, lowercase (for
 code-mixed English), the CER folds C6 (homoglyph ഠ→0 in a number) and C2 (word-final മ्→ം) in
 both modes, plus C1 (word-final samvruthokaram ...ു→...്, eval only), and the opt-in
@@ -573,11 +573,13 @@ def _canonicalize_en_numbers(text: str) -> str:
     return " ".join(out)
 
 
-# indic-nlp-library is a hard dependency (see pyproject.toml). It canonicalizes chillu /
-# ZWJ, two-part vowel signs, and colon→visarga.
-from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
+# indic-nlp-library's Malayalam normaliser, built in: a port of indic-nlp-library 0.92's
+# IndicNormalizerFactory().get_normalizer("ml") with identical behaviour (see _indicnlp_ml.py),
+# so the package has no runtime dependency on indic-nlp. It canonicalizes chillu / ZWJ,
+# two-part vowel signs, and colon→visarga.
+from .._indicnlp_ml import MalayalamNormalizer
 
-_IND_NORM = IndicNormalizerFactory().get_normalizer("ml")
+_IND_NORM = MalayalamNormalizer()
 
 # Kept for backward compatibility with importers that read this flag; always True now.
 INDIC_NLP_AVAILABLE = True
@@ -744,3 +746,20 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False) -> str:
     text = _to_digits(text)                        # ITN: number words -> digits
     text = text.replace(_ONE_HOLD, "ഒന്ന്").replace(_ONEU_HOLD, "ഒന്നു")
     return _SPACE.sub(" ", text).strip()           # E11 (punctuation + case preserved)
+
+
+def itn_numbers(text: str) -> str:
+    """Inference-mode number words -> digits only: no punctuation, case or other changes.
+
+    The ITN part of normalize(mode="inference"): the same canonicalization base up to NFC
+    (E12 chillu-conjunct fix, colon guard, E2, E1), the lone-ഒന്ന് guard (I1) and number
+    words -> digits, then whitespace collapse. ഇരുപത്തിനാല് രൂപ -> 24 രൂപ.
+    """
+    t = _fix_chillu_conjuncts(text or "")
+    t = _COLON_PUNCT.sub(_COLON_HOLD, t)
+    t = _IND_NORM.normalize(t).replace(_COLON_HOLD, ":")
+    t = unicodedata.normalize("NFC", t)
+    t = _hold_lone_one(t)
+    t = _to_digits(t)
+    t = t.replace(_ONE_HOLD, "ഒന്ന്").replace(_ONEU_HOLD, "ഒന്നു")
+    return " ".join(t.split())

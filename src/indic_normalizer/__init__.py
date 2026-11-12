@@ -35,7 +35,7 @@ register its aliases in ``registry._ALIASES`` + a branch in ``registry._load``.
 from . import base, universal
 from .registry import get_normalizer, script_of
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def normalize(text, lang=None, mode="eval", segmentation=False):
