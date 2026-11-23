@@ -10,7 +10,9 @@ The same three modes as every normalizer (NORMALIZATION.md "Mode selector"), on 
   1995 -> nineteen ninety five), apostrophe join (John's -> johns), punctuation removed,
   lowercase. ``itn=True`` scores in digits instead (twenty four -> 24, and 24 stays).
 * train — training targets: apostrophe join, punctuation removed, lowercase; numbers and the
-  spoken forms are left as written (an external verbalizer handles numbers).
+  spoken forms are left as written (an external verbalizer handles numbers), with what belongs
+  to a number kept for it: 2.5, 4:30, 8-9, 2,000,000 and the signs $24, ₹500, 20%, #5, +91, -5
+  (``strip_number_signs=True`` removes the signs).
 * inference — reader-facing: punctuation and case kept; number words -> digits (english_itn),
   in English style by default (``spell_small=True``: "I have five" stays, "five days" -> 5 days).
 
@@ -30,11 +32,12 @@ _EN = _mixed.HANDLERS["en"]
 
 
 def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=None,
-              spell_small=None, mixed=True) -> str:
+              spell_small=None, mixed=True, strip_number_signs: bool = False) -> str:
     """Normalize English ASR text; see the module docstring. ``itn`` defaults to the mode's
     default (on in inference, off in eval; no effect in train); ``spell_small`` defaults to True
-    (English style) for English as the main language. ``segmentation`` / ``mixed``: accepted for
-    a uniform API, no effect."""
+    (English style) for English as the main language. ``strip_number_signs`` (train only): remove
+    the signs before / after a number ($24 -> 24, 20% -> 20). ``segmentation`` / ``mixed``:
+    accepted for a uniform API, no effect."""
     mode = _resolve_mode(mode)
     itn = (mode == "inference") if itn is None else bool(itn)
     _ = segmentation
@@ -65,9 +68,10 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
             text = _EN.verbalize(text, opts, every=True)  # E8: numbers -> English words (grouping read)
         text = base.drop_group_commas(text)            # E7
     else:
+        text = base.hold_number_marks(text, strip_number_signs)   # T1: 2.5, 4:30, $24, 20% kept
         text = base.hold_group_commas(text)            # train: 70,000 / 100,000 kept for the verbalizer
     text = base.join_apostrophes(text)                 # E14: John's -> johns, it's -> its (train)
     text = base.strip_punct(text)                      # E5
-    text = base.restore_group_commas(text)
+    text = base.restore_number_marks(base.restore_group_commas(text))
     text = text.lower()                                # E10
     return base.collapse_space(text)                   # E11

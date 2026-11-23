@@ -67,6 +67,11 @@ NORMALIZATION.md "Mode selector".
   options per handler: `mixed={"en": {"spell_small": True}}`, or `{"en": False}` to turn one off.
 - `spell_small=True` — shortcut for `mixed={"en": {"spell_small": True}}` (English-style small
   numbers, below).
+- `strip_number_signs=True` — train only. By default train keeps the signs before / after a
+  number for the digits module (`₹500`, `Rs.500`, `500/-`, `$24`, `€10`, `20%`, `#5`, `+91`, `-5`,
+  `5°`, `~50`), which reads them (`₹500` → `അഞ്ഞൂറ് രൂപ`, `$24` → `ഇരുപത്തിനാല് ഡോളർ`). Set
+  it to remove them instead (`₹500` → `500`, `20%` → `20`); punctuation inside a number (`2.5`,
+  `4:30`, `1/2`) and group commas are kept either way.
 
 ```python
 normalize("ഇരുപത്തിനാല് പേർ", lang="ml", itn=True)                  # eval in digits -> '24 പേർ'
@@ -92,7 +97,9 @@ Applied identically to reference and hypothesis:
   `i worked twenty four hours`), so they meet a spoken `twenty four hours`
 - currency signs and percent become words in eval, in the sentence's language: `₹500` →
   `അഞ്ഞൂറ് രൂപ` (`five hundred rupees` in an English sentence), `$24` → `ഇരുപത്തിനാല് ഡോളർ`,
-  `20%` → `ഇരുപത് ശതമാനം` / `twenty percent` (train and inference keep the sign)
+  `20%` → `ഇരുപത് ശതമാനം` / `twenty percent` (train and inference keep the sign, and so every
+  other sign attached to a number: `500/-`, `#5`, `+91`, `-5`, `5°`; `strip_number_signs=True`
+  removes them in train)
 - English number words, in Malayalam script (`ട്വൻറ്റി ഫോർ`) or Latin script (`twenty four`),
   are left as written in eval / train; inference mode reads them as digits (`→ 24`)
 - decimals, ordinals and times are read the way the digits module writes training targets
@@ -142,7 +149,8 @@ language (`mixed`), sentence by sentence.
   kept), `OK` → `okay`, `&` → `and`; apostrophe join (`John's` → `johns`); punctuation removed,
   lowercase. `itn=True` scores in digits instead (`twenty four` → `24`).
 - **train** — apostrophe join, punctuation removed, lowercase; numbers and contractions left as
-  written.
+  written, with what belongs to a number kept for the digits module (`2.5`, `4:30`, `2,000,000`,
+  `$24`, `₹500`, `20%`, `#5`; `strip_number_signs=True` removes the signs).
 - **inference** — punctuation and case kept; number words → digits, English style by default
   (`spell_small=True`: `I have five` stays; `twenty four dollars` → `24 dollars`, `four thirty
   PM` → `4:30 PM`).
@@ -180,6 +188,25 @@ was said, so `verbalize(text, chooser=fn)` lets you pick per number — e.g. sco
 with an ASR model on that word's audio (`span.token_index` matches word-timestamp lists).
 Without a chooser the first (native) reading is used. Output never contains digits or number
 punctuation.
+
+Signs around a number are read with it, the word first and the bare number as an alternative
+(the sign is often not said): `₹500` / `Rs.500` / `rs 500` / `500₹` / `500/-` → `അഞ്ഞൂറ് രൂപ`
+(`ഫൈവ് ഹൺഡ്രഡ് റുപ്പീസ്`, `അഞ്ഞൂറ്`), `$24` → `ഇരുപത്തിനാല് ഡോളർ`, `€10` → `പത്ത് യൂറോ`,
+`£5` → `അഞ്ച് പൗണ്ട്`, `¥100` → `നൂറ് യെൻ`, `20%` / `2.5 %` → `ഇരുപത് ശതമാനം` / `രണ്ടര ശതമാനം`,
+`#5` → `നമ്പർ അഞ്ച്`, `5°` → `അഞ്ച് ഡിഗ്രി`, `-5` → `മൈനസ് അഞ്ച്`, `+91` → `പ്ലസ് തൊണ്ണൂറ്റൊന്ന്`;
+in an English sentence `twenty four dollars`, `one dollar`, `number five`, `five degrees celsius`.
+
+### Train targets, then digits
+
+Train mode leaves numbers as digits for this module. The analysis CLI counts the clips (lines)
+that still have digits and prints what to run next:
+
+```bash
+python -m indic_normalizer.analysis clips.txt --norm-mode train [--strip-number-signs]
+# ...
+# Clips with digits: 1,204 of 9,876 (12.2%).
+#   ... indic-digits verbalize --config cfg.yaml DATA_DIR AUDIO_DIR
+```
 
 ### Choosing readings from the audio (optional extra)
 

@@ -39,7 +39,8 @@ from .registry import get_normalizer, script_of
 __version__ = "0.2.0"
 
 
-def normalize(text, lang=None, mode="eval", segmentation=False, itn=None, spell_small=None, mixed=True):
+def normalize(text, lang=None, mode="eval", segmentation=False, itn=None, spell_small=None, mixed=True,
+              strip_number_signs=False):
     """One-shot normalize ``text`` for ``lang``/``mode`` (universal normalizer if no lang).
 
     ``segmentation`` (eval-only, default OFF) enables the W3/W4/W5 boundary rules. ``itn``
@@ -47,11 +48,13 @@ def normalize(text, lang=None, mode="eval", segmentation=False, itn=None, spell_
     number words as written; eval True scores in digits instead of words. ``mixed`` (default
     True): code-mixed handlers for other scripts (``indic_normalizer.mixed``); False leaves them
     to the shared steps, a dict sets options. ``spell_small``: shortcut for
-    ``mixed={"en": {"spell_small": ...}}`` ("I have five" stays; off: "I have 5"). The C2/C6
+    ``mixed={"en": {"spell_small": ...}}`` ("I have five" stays; off: "I have 5").
+    ``strip_number_signs`` (train only, default False): remove the signs before / after a number
+    (₹500 -> 500, $24 -> 24, 20% -> 20); by default train keeps them for the digits module. The C2/C6
     CER folds run in every mode; C1 in eval only.
     """
     fn, _ = get_normalizer(lang, mode=mode, segmentation=segmentation, itn=itn, spell_small=spell_small,
-                           mixed=mixed)
+                           mixed=mixed, strip_number_signs=strip_number_signs)
     return fn(text)
 
 

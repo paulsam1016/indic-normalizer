@@ -146,7 +146,16 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
   for spelling fidelity:
   - **T1 number-internal punctuation survives E5**: `4:00-5:00`, `2.5`, `70%`, `1/2`, `23-ന്`,
     `8-9` (eval_frozen: 77 times, 23 decimals, 31 percents, 179 numeral-suffixes, 30 ranges,
-    11 slashes). Ordinary punctuation is still stripped.
+    11 slashes). Ordinary punctuation is still stripped (a spaced `4:00 - 5:00` dash too).
+  - **T1 signs before / after a number survive too** (all three normalizers: Malayalam, English,
+    universal): `₹500`, `Rs.500`, `500₹`, `500/-`, `$24`, `$ 24`, `€10`, `£5`, `¥100`, `20%`
+    (`2.5 %` is glued to `2.5%`), `#5`, `+91`, `-5`, `5°`, `~50`. The digits module reads each
+    with its word (`അഞ്ഞൂറ് രൂപ`, `ഇരുപത്തിനാല് ഡോളർ`, `നമ്പർ അഞ്ച്`, `അഞ്ച് ഡിഗ്രി`) and offers
+    the bare number as an alternative. **`strip_number_signs=True`** removes these signs instead
+    (`₹500` → `500`); punctuation inside a number and group commas are kept either way.
+  - **Clips with digits are counted**: `python -m indic_normalizer.analysis FILE --norm-mode train`
+    ends with the number of lines (clips) whose target still has digits, and the
+    `indic-digits verbalize` command that turns them into the spoken words.
   - **No C1 fold** — a target keeps its real spelling (`ഒരു`, `പറഞ്ഞു`); C1 used to rewrite
     4–5.6% of target words.
   - **Tags are not removed** (handled upstream).
@@ -204,6 +213,7 @@ no letters goes to the main language. `mixed=False` restores Malayalam words eve
 | C2 word-final `മ്`→`ം` | ✓ | ✓ (not after a virama) | ✓ |
 | E7 digit-grouping comma (`70,000`, `1,75,000`) | dropped **after** the number is read with its grouping (`2,000,000` in an English sentence → `two million`, `1,00,000` → `one lakh`) | **kept** (`1,75,000`: the external verbalizer sees the grouping) | **kept** (digits as written) |
 | **T1 number-internal punctuation** (`4:00-5:00`, `2.5`, `70%`, `23-ന്`) | — (stripped) | **kept** | kept |
+| **T1 signs before / after a number** (`₹500`, `$24`, `500/-`, `#5`, `+91`, `-5`, `5°`, `~50`) | — (read as words by E15 / E16 / E8) | **kept** (`strip_number_signs=True`: removed) | kept |
 | **E14 apostrophe inside a Latin word** (`it's`→`its`, `can't`→`cant`; not `it s`) | join | join | **keep** |
 | **E15 currency sign / percent** (`₹500`, `Rs.500`, `500₹`, `$24`, `€10`, `£5`, `20%`) | → amount + word in the sentence's language (`500 രൂപ` / `500 rupees`, `24 ഡോളർ` / `24 dollars`, `20 ശതമാനം` / `20 percent`), then E8 | — (kept for the external verbalizer) | — (kept) |
 | **E16 numbers with special characters** (decimal, ordinal, time, time range, range, date, fraction / slash, number + suffix, `+`, codes) | → the digits module's first reading, glide style as E8, **before** E5 removes the characters (`2.5`→`രണ്ടര`, `21st`→`ഇരുപത്തിയൊന്നാം`, `4:30-ന്`→`നാലരയ്ക്ക്`, `40-ന്റെ`→`നാൽപ്പതിന്റെ`, `4:00-5:00`→`നാല് മണി അഞ്ച് മണി`, `1/2`→`അര`, `3+2`→`മൂന്ന് പ്ലസ് രണ്ട്`); English sentences: every number (`two point five`, `twenty first`, `four oh five`, `nineteen ninety five`, `2,000,000`→`two million`) | — | — |

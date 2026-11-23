@@ -641,21 +641,21 @@ _COLON_PUNCT = re.compile(r"(?<=[\u0d66-\u0d6f]):|:(?![\u0d00-\u0d65\u0d70-\u0d7
 # (<unk> is E3.) Not applied in train mode, where tags are handled by the data pipeline.
 _TAG = re.compile(r"<[A-Za-z][A-Za-z _-]*>")
 
-# T1 (train only): punctuation INSIDE a number is meaning, not punctuation — an external
-# verbalizer needs 4:00-5:00 (time range), 2.5 (decimal), 70% (percent), 23-ന് (numeral +
-# case suffix), 8-9 (range). Hold those characters in private-use placeholders across E5.
-_NUM_PUNCT = re.compile(r"(?<=\d)[:.\-/+](?=\d)|(?<=\d)%|(?<=\d)-(?=[\u0d00-\u0d7f])")   # 3+2 kept too
-_NUM_PUNCT_HOLD = {":": "\ue001", ".": "\ue002", "-": "\ue003", "/": "\ue004", "%": "\ue005", "+": "\ue006"}
-_NUM_PUNCT_RESTORE = str.maketrans({v: k for k, v in _NUM_PUNCT_HOLD.items()})
+# T1 (train only): characters that belong to a number are meaning, not punctuation — the
+# external verbalizer (indic_normalizer.digits) needs 4:00-5:00 (time range), 2.5 (decimal), 70%
+# (percent), 23-ന് (numeral + case suffix), 8-9 (range), and the signs around a number: ₹500,
+# $24, #5, +91, -5, 500/-. They are held in private-use placeholders across E5 (base.T1);
+# strip_number_signs=True drops the signs before / after a number and keeps the inside ones.
+def _protect_num_punct(text: str, strip_signs: bool = False) -> str:
+    return base.hold_number_marks(text, strip_signs)
 
 
-def _protect_num_punct(text: str) -> str:
-    return _NUM_PUNCT.sub(lambda m: _NUM_PUNCT_HOLD[m.group(0)], text)
+_NUM_PUNCT_RESTORE = base._MARK_RESTORE
 _COLON_HOLD = "\ue000"
 
 
 def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=None,
-              spell_small=None, mixed=True) -> str:
+              spell_small=None, mixed=True, strip_number_signs: bool = False) -> str:
     """Normalize Malayalam ASR text; see module docstring and NORMALIZATION.md (mode selector).
 
     mode="eval" (default; alias "evaluation") — WER/CER scoring: strip punctuation, lowercase,
@@ -665,7 +665,8 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
     mode="train" (aliases "training", "fine-tune") — training targets: like eval, but numbers
     are NOT rewritten (digit verbalization is handled outside this library), punctuation inside
     a number is kept for that verbalizer (4:00-5:00, 2.5, 70%, 23-ന്, 8-9, and group commas:
-    1,75,000 / 2,000,000, so it can see the grouping), the C1 fold is off
+    1,75,000 / 2,000,000, so it can see the grouping), so are the signs before / after a number
+    (₹500, Rs.500, $24, €10, 500/-, #5, +91, -5, 5°: digits reads ₹500 as അഞ്ഞൂറ് രൂപ), the C1 fold is off
     (targets keep their real spelling) and <tags> are left to the data pipeline.
     mode="inference" — reader-facing ITN: keep punctuation and case; number words -> digits
     (ഇരുപത്തിനാല് -> 24, ട്വൻറ്റി ഫോർ -> 24, twenty four -> 24, നാലാം -> 4-ാം); existing digits
@@ -690,6 +691,10 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
     spell_small (default None = as ``mixed`` sets it, off) — shortcut for
     mixed={"en": {"spell_small": ...}}: English style for lone small Latin-script numbers in
     ITN ("I have five" stays; off: "I have 5"). Malayalam-script number words are not affected.
+
+    strip_number_signs (default False; train only) — remove the signs before / after a number
+    (₹ $ € £ ¥ % ° # + - ~ /- and Rs. / INR) instead of keeping them: ₹500 -> 500, 20% -> 20.
+    Punctuation inside a number (2.5, 4:30, 1/2) and group commas are still kept.
 
     The CER folds C6 (homoglyph ഠ->0 in a number) and C2 (word-final മ് -> ം) run in BOTH modes
     (both unambiguous). C1 (word-final samvruthokaram ...ു്/...ു -> ...്) runs in EVAL ONLY — it
@@ -723,7 +728,7 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
 
     if mode in ("eval", "train"):
         if mode == "train":
-            text = _protect_num_punct(text)            # T1:  4:00-5:00, 2.5, 70%, 23-ന്, 8-9 survive E5
+            text = _protect_num_punct(text, strip_number_signs)   # T1: 4:00-5:00, 2.5, 70%, ₹500, $24 survive E5
             text = base.hold_group_commas(text)        # T1:  70,000 / 1,00,000 / 100,000 too (grouping)
         if segmentation:
             text = _join_intra_word_hyphen(text)       # W4:  e-mail -> email (BEFORE E5 eats the hyphen)
