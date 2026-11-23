@@ -147,6 +147,26 @@ def restore_number_marks(text: str) -> str:
     return text.translate(_MARK_RESTORE)
 
 
+# E13: bracketed annotation tags (<unintelligible>, <noise>, <no speech>). Eval and inference drop
+# them; train keeps them whole for the data pipeline (E5 would otherwise strip the brackets and
+# leave the tag NAME as a spoken word), or drops them with remove_tags=True.
+TAG = re.compile(r"<[A-Za-z][A-Za-z _-]*>")
+_TAG_HOLD = str.maketrans({"<": "\ue00b", ">": "\ue00c", " ": "\ue00d", "-": "\ue00e", "_": "\ue00f"})
+_TAG_RESTORE = str.maketrans({"\ue00b": "<", "\ue00c": ">", "\ue00d": " ", "\ue00e": "-", "\ue00f": "_"})
+
+
+def hold_tags(text: str, remove: bool = False) -> str:
+    """Train: keep each tag whole across punctuation removal (``restore_tags`` puts it back), or
+    replace it with a space when ``remove`` is True."""
+    if remove:
+        return TAG.sub(" ", text)
+    return TAG.sub(lambda m: m.group(0).translate(_TAG_HOLD), text)
+
+
+def restore_tags(text: str) -> str:
+    return text.translate(_TAG_RESTORE)
+
+
 _HAS_DIGIT = re.compile(r"\d")
 
 

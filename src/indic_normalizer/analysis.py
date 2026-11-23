@@ -488,7 +488,7 @@ def _item_breakdown(texts: list, examples_per_item: int = 5) -> list:
 def analyze(input_path: str, lang: str = "ml",
             limit: int | None = None, examples_per_item: int = 5,
             norm_mode: str = "eval", segmentation: bool = False,
-            strip_number_signs: bool = False) -> Report:
+            strip_number_signs: bool = False, remove_tags: bool = False) -> Report:
     """Analyze the plain-text corpus at ``input_path`` and return a :class:`Report`.
 
     ``input_path`` is a file with one transcript (or segment) per line. ``limit`` caps
@@ -503,7 +503,7 @@ def analyze(input_path: str, lang: str = "ml",
         texts = texts[:limit]
 
     norm_fn, _ = get_normalizer(lang, mode=norm_mode, segmentation=segmentation,
-                                strip_number_signs=strip_number_signs)
+                                strip_number_signs=strip_number_signs, remove_tags=remove_tags)
 
     n_chars = n_tokens = 0
     char_delta = char_abs_delta = token_delta = lines_changed = lines_with_digits = 0
@@ -1229,6 +1229,9 @@ def main(argv=None):
     p.add_argument("--strip-number-signs", action="store_true",
                    help="train mode: remove the signs before / after a number (₹500 -> 500, $24 -> 24, "
                         "20%% -> 20) instead of keeping them for the digits module (default: kept).")
+    p.add_argument("--remove-tags", action="store_true",
+                   help="train mode: drop annotation tags (<unintelligible>, <noise>) instead of keeping "
+                        "them whole (default: kept; eval and inference always drop them).")
     p.add_argument("--segmentation", action="store_true",
                    help="enable the opt-in W3/W4/W5 boundary rules (eval only; OFF by "
                         "default — measured net-neutral-to-negative on the sample corpora).")
@@ -1254,7 +1257,7 @@ def _run_analyze(args):
     out = args.out or "normalization_report.html"
     report = analyze(args.inputs[0], lang=args.lang, limit=args.limit,
                      norm_mode=args.norm_mode, segmentation=args.segmentation,
-                     strip_number_signs=args.strip_number_signs)
+                     strip_number_signs=args.strip_number_signs, remove_tags=args.remove_tags)
     render_html(report, out)
 
     print(f"Analyzed {report.n_lines:,} lines from '{report.label}' "

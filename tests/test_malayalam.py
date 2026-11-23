@@ -398,7 +398,8 @@ def test_train_keeps_number_internal_punctuation():
 
 
 def test_train_keeps_tags():
-    assert train("<unintelligible> ഹലോ") == "unintelligible ഹലോ"
+    assert train("<unintelligible> ഹലോ") == "<unintelligible> ഹലോ"    # whole, not a fake word
+    assert train("<unintelligible> ഹലോ", remove_tags=True) == "ഹലോ"
 
 
 # --- Eval: large numbers read as numbers, tags removed ------------------------------

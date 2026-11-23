@@ -124,7 +124,7 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
 | E9 | English-style number words → canonical Malayalam (`ട്വൻറ്റി ഫോർ`→`ഇരുപത്തിനാല്`) | WER + CER | ★★★★ hard | Convention-invariant scoring: a spelling-tolerant word parser, with ambiguous `ടു`/`ഫോർ` converted only beside an unambiguous number word, and lakh units mapped. Was **`inference` only**; inference now reads English words directly in the ITN (`malayalam_itn`), so E9 is no longer called there. Not in `eval` or `train`. |
 | E10 | Lowercasing | CER | ★ trivial | `str.lower()`, for code-mixed Latin tokens. |
 | E11 | Whitespace collapse + trim | WER | ★ trivial | One regex: multiple spaces → one. |
-| E13 | Annotation tags (`<unintelligible>`, `<noise>`) | WER | ★ trivial | Whole tag dropped; E5 alone would leave the tag name as a fake word (123 in dataset refs). **`eval` + `inference`**; `train` leaves tags to the data pipeline. |
+| E13 | Annotation tags (`<unintelligible>`, `<noise>`) | WER | ★ trivial | Whole tag dropped; E5 alone would leave the tag name as a fake word (123 in dataset refs). **`eval` + `inference`**; `train` keeps the tag whole for the data pipeline (`remove_tags=True`: dropped). |
 | E12 | Mis-encoded chillu conjunct (`ൻ്റ`→`ന്റ`; also `ൺ ർ ൽ ൾ ൿ` before virama) | CER | ★★★ moderate | Small closed map, but built on a real insight and guarded: a chillu + virama is not a real chillu — it's the base consonant typed with the wrong codepoint (`വിവേകാനന്ദൻ്റെ` vs `വിവേകാനന്ദന്റെ`), NFC-invisible. Rewritten to the base-consonant form; genuine word-final chillu (no following virama) left untouched. First step in `malayalam.normalize()` (`_fix_chillu_conjuncts`). |
 
 ---
@@ -158,7 +158,8 @@ guards). Rows keep pipeline order, not difficulty order, because the sequence is
     `indic-digits verbalize` command that turns them into the spoken words.
   - **No C1 fold** — a target keeps its real spelling (`ഒരു`, `പറഞ്ഞു`); C1 used to rewrite
     4–5.6% of target words.
-  - **Tags are not removed** (handled upstream).
+  - **Tags are kept whole** (`<unintelligible>`, not the bare word `unintelligible`): handled
+    upstream. **`remove_tags=True`** drops them (a clip that is only a tag becomes empty).
   - **T2 AU length mark kept**: indic-nlp rewrites `ൗ` (U+0D57, `അക്കൗണ്ട്`) as the two-part
     `ൌ` (U+0D4C); train maps it back. Same sound, but the sravaani tokenizer ranks `ൗ` as the
     more frequent piece (eval_frozen: 215 `ൗ`, 0 `ൌ`). Eval is unaffected (symmetric).
@@ -206,7 +207,7 @@ no letters goes to the main language. `mixed=False` restores Malayalam words eve
 | E12 chillu-conjunct fix (`ൻ്റ`→`ന്റ`) | ✓ | ✓ | ✓ |
 | E2 chillu / ZWJ canonicalization (indic-nlp)¹ | ✓ | ✓ | ✓ |
 | E1 NFC · E3 `<unk>`/`⁇` drop · E4 zero-width drop | ✓ | ✓ | ✓ |
-| E13 annotation tags (`<unintelligible>`) | drop | — (kept) | drop |
+| E13 annotation tags (`<unintelligible>`) | drop | kept whole (`remove_tags=True`: drop) | drop |
 | E6 Indic-digit → ASCII (`൨൪`→`24`) | ✓ | ✓ | ✓ |
 | C6 homoglyph `ഠ`→`0` inside a number | ✓ | ✓ | ✓ |
 | T2 AU length mark `ൌ`→`ൗ` (undo indic-nlp) | — | ✓ | — |

@@ -32,11 +32,13 @@ _EN = _mixed.HANDLERS["en"]
 
 
 def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=None,
-              spell_small=None, mixed=True, strip_number_signs: bool = False) -> str:
+              spell_small=None, mixed=True, strip_number_signs: bool = False,
+              remove_tags: bool = False) -> str:
     """Normalize English ASR text; see the module docstring. ``itn`` defaults to the mode's
     default (on in inference, off in eval; no effect in train); ``spell_small`` defaults to True
     (English style) for English as the main language. ``strip_number_signs`` (train only): remove
-    the signs before / after a number ($24 -> 24, 20% -> 20). ``segmentation`` / ``mixed``:
+    the signs before / after a number ($24 -> 24, 20% -> 20). ``remove_tags`` (train only): drop
+    <unintelligible>-style tags instead of keeping them whole. ``segmentation`` / ``mixed``:
     accepted for a uniform API, no effect."""
     mode = _resolve_mode(mode)
     itn = (mode == "inference") if itn is None else bool(itn)
@@ -68,10 +70,11 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
             text = _EN.verbalize(text, opts, every=True)  # E8: numbers -> English words (grouping read)
         text = base.drop_group_commas(text)            # E7
     else:
+        text = base.hold_tags(text, remove_tags)        # E13: tags kept whole (or dropped)
         text = base.hold_number_marks(text, strip_number_signs)   # T1: 2.5, 4:30, $24, 20% kept
         text = base.hold_group_commas(text)            # train: 70,000 / 100,000 kept for the verbalizer
     text = base.join_apostrophes(text)                 # E14: John's -> johns, it's -> its (train)
     text = base.strip_punct(text)                      # E5
-    text = base.restore_number_marks(base.restore_group_commas(text))
+    text = base.restore_tags(base.restore_number_marks(base.restore_group_commas(text)))
     text = text.lower()                                # E10
     return base.collapse_space(text)                   # E11

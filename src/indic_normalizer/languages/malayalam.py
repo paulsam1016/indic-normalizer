@@ -638,8 +638,8 @@ _COLON_PUNCT = re.compile(r"(?<=[\u0d66-\u0d6f]):|:(?![\u0d00-\u0d65\u0d70-\u0d7
 
 # E13: bracketed annotation tags in references (<unintelligible>, <noise>, <laugh> ...). E5 would
 # strip the brackets and leave the tag NAME as a spoken word; drop the whole tag instead.
-# (<unk> is E3.) Not applied in train mode, where tags are handled by the data pipeline.
-_TAG = re.compile(r"<[A-Za-z][A-Za-z _-]*>")
+# (<unk> is E3.) Train keeps them whole for the data pipeline (remove_tags=True drops them).
+_TAG = base.TAG
 
 # T1 (train only): characters that belong to a number are meaning, not punctuation — the
 # external verbalizer (indic_normalizer.digits) needs 4:00-5:00 (time range), 2.5 (decimal), 70%
@@ -655,7 +655,8 @@ _COLON_HOLD = "\ue000"
 
 
 def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=None,
-              spell_small=None, mixed=True, strip_number_signs: bool = False) -> str:
+              spell_small=None, mixed=True, strip_number_signs: bool = False,
+              remove_tags: bool = False) -> str:
     """Normalize Malayalam ASR text; see module docstring and NORMALIZATION.md (mode selector).
 
     mode="eval" (default; alias "evaluation") — WER/CER scoring: strip punctuation, lowercase,
@@ -696,6 +697,9 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
     (₹ $ € £ ¥ % ° # + - ~ /- and Rs. / INR) instead of keeping them: ₹500 -> 500, 20% -> 20.
     Punctuation inside a number (2.5, 4:30, 1/2) and group commas are still kept.
 
+    remove_tags (default False; train only) — drop annotation tags (<unintelligible>, <noise>)
+    instead of keeping them whole for the data pipeline. Eval and inference always drop them.
+
     The CER folds C6 (homoglyph ഠ->0 in a number) and C2 (word-final മ് -> ം) run in BOTH modes
     (both unambiguous). C1 (word-final samvruthokaram ...ു്/...ു -> ...്) runs in EVAL ONLY — it
     is a symmetric scoring fold that can also touch a genuine -u vowel, so it is not applied to
@@ -725,6 +729,8 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
     # verbalizer (train) or left as written (inference).
     if mode != "train":
         text = _TAG.sub(" ", text)                # E13: <unintelligible>-style tags (eval + inference)
+    else:
+        text = base.hold_tags(text, remove_tags)  # E13: train keeps them whole, or drops them
 
     if mode in ("eval", "train"):
         if mode == "train":
@@ -746,7 +752,7 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
         text = base.join_apostrophes(text)             # E14: it's -> its, can't -> cant (not "it s")
         text = _PUNCT.sub(" ", text)                   # E5:  strip punctuation
         if mode == "train":
-            text = base.restore_group_commas(text.translate(_NUM_PUNCT_RESTORE))
+            text = base.restore_tags(base.restore_group_commas(text.translate(_NUM_PUNCT_RESTORE)))
         if mode == "eval" and not itn:                 # E8 (eval only; train leaves digits)
             text = _NUM_RE.sub(_verbalize_digits, text)  #      digits -> native words (24 -> ഇരുപത്തിനാല്)
         text = text.lower()                            # E10: lowercase

@@ -128,3 +128,24 @@ def test_digits_left_message():
     msg = digits_left_message(2, 3)
     assert "Clips with digits: 2 of 3" in msg and "indic-digits verbalize" in msg
     assert "no numbers left" in digits_left_message(0, 3)
+
+
+# --- annotation tags in train: kept whole by default, dropped with remove_tags ------------------
+@pytest.mark.parametrize("lang", ["ml", "en", None])
+def test_train_keeps_tags_whole(lang):
+    assert train("<unintelligible>", lang=lang) == "<unintelligible>"       # not "unintelligible"
+    assert train("അവൻ <unintelligible> വന്നു, <no speech>.", lang=lang) == \
+        "അവൻ <unintelligible> വന്നു <no speech>"
+
+
+@pytest.mark.parametrize("lang", ["ml", "en", None])
+def test_train_remove_tags(lang):
+    assert train("<unintelligible>", lang=lang, remove_tags=True) == ""
+    assert train("അവൻ <unintelligible> വന്നു, <Noise>.", lang=lang, remove_tags=True) == "അവൻ വന്നു"
+
+
+def test_remove_tags_does_not_change_eval_or_inference():
+    t = "അവൻ <unintelligible> വന്നു"
+    assert normalize(t, lang="ml", remove_tags=True) == normalize(t, lang="ml")
+    assert normalize(t, lang="ml", mode="inference", remove_tags=True) == \
+        normalize(t, lang="ml", mode="inference")

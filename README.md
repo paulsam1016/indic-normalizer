@@ -72,6 +72,9 @@ NORMALIZATION.md "Mode selector".
   `5°`, `~50`), which reads them (`₹500` → `അഞ്ഞൂറ് രൂപ`, `$24` → `ഇരുപത്തിനാല് ഡോളർ`). Set
   it to remove them instead (`₹500` → `500`, `20%` → `20`); punctuation inside a number (`2.5`,
   `4:30`, `1/2`) and group commas are kept either way.
+- `remove_tags=True` — train only. By default train keeps annotation tags whole
+  (`<unintelligible>`) for the data pipeline; set it to drop them (a clip that is only a tag
+  becomes empty). Eval and inference always drop them.
 
 ```python
 normalize("ഇരുപത്തിനാല് പേർ", lang="ml", itn=True)                  # eval in digits -> '24 പേർ'
