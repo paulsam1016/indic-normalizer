@@ -107,6 +107,74 @@ def restore_group_commas(text: str) -> str:
     return text.replace(_COMMA_HOLD, ",")
 
 
+# T1 (train): characters that belong to a number are meaning, not punctuation. The external
+# verbalizer (indic_normalizer.digits) reads them, so train keeps them through punctuation
+# removal (E5):
+#   inside a number  4:00-5:00, 2.5, 8-9, 1/2, 3+2, 23-ന് (numeral + Malayalam case suffix)
+#   after a number   20%, 500/- (rupees, Indian style); ₹ € £ ¥ ° are never punctuation
+#   before a number  $24, #5, +91, -5, ~50, and the dot of Rs.500
+# ``strip_signs=True`` drops the before / after signs (₹ $ € £ ¥ % ° # + - ~ /- and Rs.) and
+# keeps only what is inside the number (its value changes without it: 2.5, 4:30, 1/2).
+_INNER_MARK = r"(?<=\d)[:.\-/+](?=\d)|(?<=\d)-(?=[\u0d00-\u0d7f])"
+_AFTER_MARK = r"(?<=\d)(?:\s?%|/-(?![\w-]))"                    # 2.5 % is glued: 2.5%
+_BEFORE_MARK = (r"(?<![\w$#+\-~.,:/])(?:[$#](?=\s?\d)|[+\-~](?=\d))"   # a spaced - / + / ~ is a dash
+                r"|(?i:(?<![\w.])rs\.(?=\s?\d))")
+_MARK_HOLD = {":": "\ue001", ".": "\ue002", "-": "\ue003", "/": "\ue004", "%": "\ue005",
+              "+": "\ue006", "$": "\ue008", "#": "\ue009", "~": "\ue00a"}
+_MARK_RESTORE = str.maketrans({v: k for k, v in _MARK_HOLD.items()})
+NUMBER_MARK = re.compile(f"{_INNER_MARK}|{_AFTER_MARK}|{_BEFORE_MARK}")
+INNER_NUMBER_MARK = re.compile(_INNER_MARK)
+# a sign before / after a number, for strip_signs (Rs / INR as a word: rs 500 -> 500)
+NUMBER_SIGN = re.compile(
+    r"(?i)(?<![\w$#+\-~.,:/])(?:(?:[$€£¥₹#]|rs\.?|inr)\s?|[+\-~])(?=\d)"   # before: $24 / ₹ 500 / Rs.500 / -5
+    r"|(?<=\d)\s?(?:[%₹€£¥°]|/-)(?![\w-])"                             # after:  20% / 500₹ / 5° / 500/-
+)
+
+
+def hold_number_marks(text: str, strip_signs: bool = False) -> str:
+    """Train: hold the characters that belong to a number (see T1 above) in private-use
+    placeholders across punctuation removal; ``restore_number_marks`` puts them back.
+    ``strip_signs=True``: signs before / after a number are removed instead (only the
+    characters inside it are held)."""
+    if strip_signs:
+        text = NUMBER_SIGN.sub(lambda m: " " if m.group(0)[:1].isspace() else "", text)
+        return INNER_NUMBER_MARK.sub(lambda m: _MARK_HOLD[m.group(0)], text)
+    return NUMBER_MARK.sub(lambda m: "".join(_MARK_HOLD.get(c, c) for c in m.group(0)
+                                             if not c.isspace()), text)
+
+
+def restore_number_marks(text: str) -> str:
+    return text.translate(_MARK_RESTORE)
+
+
+# E13: bracketed annotation tags (<unintelligible>, <noise>, <no speech>). Eval and inference drop
+# them; train keeps them whole for the data pipeline (E5 would otherwise strip the brackets and
+# leave the tag NAME as a spoken word), or drops them with remove_tags=True.
+TAG = re.compile(r"<[A-Za-z][A-Za-z _-]*>")
+_TAG_HOLD = str.maketrans({"<": "\ue00b", ">": "\ue00c", " ": "\ue00d", "-": "\ue00e", "_": "\ue00f"})
+_TAG_RESTORE = str.maketrans({"\ue00b": "<", "\ue00c": ">", "\ue00d": " ", "\ue00e": "-", "\ue00f": "_"})
+
+
+def hold_tags(text: str, remove: bool = False) -> str:
+    """Train: keep each tag whole across punctuation removal (``restore_tags`` puts it back), or
+    replace it with a space when ``remove`` is True."""
+    if remove:
+        return TAG.sub(" ", text)
+    return TAG.sub(lambda m: m.group(0).translate(_TAG_HOLD), text)
+
+
+def restore_tags(text: str) -> str:
+    return text.translate(_TAG_RESTORE)
+
+
+_HAS_DIGIT = re.compile(r"\d")
+
+
+def has_digits(text: str) -> bool:
+    """True when ``text`` still contains a digit (a train target that needs the digits module)."""
+    return bool(_HAS_DIGIT.search(text or ""))
+
+
 def drop_group_commas(text: str) -> str:
     """70,000 / 1,75,000 -> 70000 / 175000 (a 1,2,3 list is untouched)."""
     return GROUP_COMMA.sub(lambda m: m.group(0).replace(",", ""), text)

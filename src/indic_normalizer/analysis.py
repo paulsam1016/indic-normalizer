@@ -455,6 +455,8 @@ class Report:
     guardrail_flags: list             # list of {line_no, snippet, flags}
     norm_mode: str = "eval"           # normalizer mode used: "eval" (verbalize) or "inference" (ITN)
     generated_at: str = ""
+    lines_with_digits: int = 0        # lines (clips) whose normalized text still has a digit
+    strip_number_signs: bool = False  # train: signs before / after a number removed
 
 
 def _item_breakdown(texts: list, examples_per_item: int = 5) -> list:
@@ -485,22 +487,26 @@ def _item_breakdown(texts: list, examples_per_item: int = 5) -> list:
 
 def analyze(input_path: str, lang: str = "ml",
             limit: int | None = None, examples_per_item: int = 5,
-            norm_mode: str = "eval", segmentation: bool = False) -> Report:
+            norm_mode: str = "eval", segmentation: bool = False,
+            strip_number_signs: bool = False, remove_tags: bool = False) -> Report:
     """Analyze the plain-text corpus at ``input_path`` and return a :class:`Report`.
 
     ``input_path`` is a file with one transcript (or segment) per line. ``limit`` caps
     the number of lines (handy for a quick look); ``None`` = all. ``norm_mode`` is the
     normalizer mode to inspect: "eval" (default; model-facing verbalization) or "inference"
-    (reader-facing ITN — numbers to digits, punctuation/case preserved).
+    (reader-facing ITN — numbers to digits, punctuation/case preserved). ``lines_with_digits``
+    counts the lines whose normalized text still has a digit: in train mode these are the clips
+    the digits module (``indic-digits verbalize``) still has to turn into words.
     """
     texts = load_lines(input_path)
     if limit is not None:
         texts = texts[:limit]
 
-    norm_fn, _ = get_normalizer(lang, mode=norm_mode, segmentation=segmentation)
+    norm_fn, _ = get_normalizer(lang, mode=norm_mode, segmentation=segmentation,
+                                strip_number_signs=strip_number_signs, remove_tags=remove_tags)
 
     n_chars = n_tokens = 0
-    char_delta = char_abs_delta = token_delta = lines_changed = 0
+    char_delta = char_abs_delta = token_delta = lines_changed = lines_with_digits = 0
     guardrail = []
 
     for idx, raw in enumerate(texts):
@@ -512,6 +518,8 @@ def analyze(input_path: str, lang: str = "ml",
         out = norm_fn(raw)
         if out != raw:
             lines_changed += 1
+        if base.has_digits(out):
+            lines_with_digits += 1
         d = len(out) - len(raw)
         char_delta += d
         char_abs_delta += abs(d)
@@ -534,6 +542,7 @@ def analyze(input_path: str, lang: str = "ml",
         token_delta=token_delta, lines_changed=lines_changed,
         guardrail_flags=guardrail, norm_mode=norm_mode,
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        lines_with_digits=lines_with_digits, strip_number_signs=bool(strip_number_signs),
     )
 
 
@@ -621,6 +630,11 @@ def render_html(report: Report, out_path: str) -> str:
 
     tok_dir = "added" if r.token_delta >= 0 else "removed"
     chr_dir = "added" if r.char_delta >= 0 else "removed"
+    digits_card = ""
+    if _is_train(r.norm_mode):                     # clips the digits module still has to verbalize
+        digits_card = (f'<div class="kpi"><div class="v">{r.lines_with_digits:,}</div>'
+                       f'<div class="l">clips with digits &middot; run <code>indic-digits verbalize</code>'
+                       f'</div></div>')
 
     doc = f"""<!doctype html>
 <html lang="en">
@@ -707,6 +721,7 @@ def render_html(report: Report, out_path: str) -> str:
       <div class="l">tokens {tok_dir} (WER-side)</div></div>
     <div class="kpi"><div class="v">{abs(r.char_delta):,}</div>
       <div class="l">chars {chr_dir} net (CER-side)</div></div>
+    {digits_card}
   </div>
 
   {_item_tables_html(r.items, r.n_lines)}
@@ -1211,6 +1226,12 @@ def main(argv=None):
                         "verbalized to native words), train (aliases training/fine-tune; same but "
                         "numbers left as written) or inference (reader-facing ITN — number "
                         "words to digits, punctuation/case preserved).")
+    p.add_argument("--strip-number-signs", action="store_true",
+                   help="train mode: remove the signs before / after a number (₹500 -> 500, $24 -> 24, "
+                        "20%% -> 20) instead of keeping them for the digits module (default: kept).")
+    p.add_argument("--remove-tags", action="store_true",
+                   help="train mode: drop annotation tags (<unintelligible>, <noise>) instead of keeping "
+                        "them whole (default: kept; eval and inference always drop them).")
     p.add_argument("--segmentation", action="store_true",
                    help="enable the opt-in W3/W4/W5 boundary rules (eval only; OFF by "
                         "default — measured net-neutral-to-negative on the sample corpora).")
@@ -1235,7 +1256,8 @@ def main(argv=None):
 def _run_analyze(args):
     out = args.out or "normalization_report.html"
     report = analyze(args.inputs[0], lang=args.lang, limit=args.limit,
-                     norm_mode=args.norm_mode, segmentation=args.segmentation)
+                     norm_mode=args.norm_mode, segmentation=args.segmentation,
+                     strip_number_signs=args.strip_number_signs, remove_tags=args.remove_tags)
     render_html(report, out)
 
     print(f"Analyzed {report.n_lines:,} lines from '{report.label}' "
@@ -1258,6 +1280,7 @@ def _run_analyze(args):
             "n_tokens": report.n_tokens, "n_chars": report.n_chars,
             "lines_changed": report.lines_changed, "token_delta": report.token_delta,
             "char_delta": report.char_delta, "guardrail_flags": len(report.guardrail_flags),
+            "lines_with_digits": report.lines_with_digits,
             "items": [{"code": it.code, "kind": it.kind, "metric": it.metric,
                        "title": it.title, "lines_hit": it.lines_hit,
                        "total_hits": it.total_hits, "examples": it.examples}
@@ -1266,6 +1289,27 @@ def _run_analyze(args):
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False, indent=2)
         print(f"JSON summary -> {args.json}")
+
+    if _is_train(report.norm_mode):
+        print(digits_left_message(report.lines_with_digits, report.n_lines))
+
+
+def _is_train(mode) -> bool:
+    try:
+        return base.resolve_mode(mode) == "train"
+    except ValueError:
+        return False
+
+
+def digits_left_message(n_digits: int, n_lines: int) -> str:
+    """The end-of-run note for train mode: how many clips still have digits, and what to run."""
+    if not n_digits:
+        return f"\nClips with digits: 0 of {n_lines:,} — no numbers left to verbalize."
+    return (f"\nClips with digits: {n_digits:,} of {n_lines:,} ({_pct(n_digits, n_lines)}).\n"
+            "  Train targets keep numbers as digits (with ₹ $ % ... kept for the reader). Run the\n"
+            "  digits module to turn them into the words that were spoken:\n"
+            "    indic-digits verbalize --config cfg.yaml DATA_DIR AUDIO_DIR   # reading picked from the audio\n"
+            "    indic-digits text \"<sentence>\"                               # quick look, default reading")
 
 
 def _run_compare(args):

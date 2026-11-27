@@ -30,13 +30,17 @@ _resolve_mode = base.resolve_mode
 
 
 def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=None,
-              spell_small=None, mixed=True) -> str:
+              spell_small=None, mixed=True, strip_number_signs: bool = False,
+              remove_tags: bool = False) -> str:
     """Script-, (mode-dependent) punctuation- and case-insensitive normalization.
 
     mode="eval" (default) and mode="train" strip punctuation and lowercase;
     mode="inference" preserves both for a readable transcript. Encoding/digit/whitespace
-    canonicalization is identical in both. ``segmentation``, ``itn``, ``spell_small`` and ``mixed`` are accepted for a uniform
-    API but have no effect here (the universal normalizer has no per-language or number rules).
+    canonicalization is identical in both. mode="train" keeps what belongs to a number for an
+    external verbalizer (2.5, 4:30, 70,000, ₹500, $24, 20%); ``strip_number_signs=True`` removes
+    the signs before / after a number; tags (<unintelligible>) are kept whole, or dropped with
+    ``remove_tags=True``. ``segmentation``, ``itn``, ``spell_small`` and ``mixed`` are
+    accepted for a uniform API but have no effect here (no per-language or number rules).
     """
     mode = _resolve_mode(mode)
     _ = segmentation, itn, spell_small, mixed  # API parity; universal has no W-family or number rules
@@ -48,9 +52,11 @@ def normalize(text: str, mode: str = "eval", segmentation: bool = False, itn=Non
         if mode == "eval":
             text = base.drop_group_commas(text)   # E7: 1,000 -> 1000 (BEFORE E5 splits it)
         else:
+            text = base.hold_tags(text, remove_tags)   # E13: tags kept whole (or dropped)
+            text = base.hold_number_marks(text, strip_number_signs)   # T1: 2.5, $24, 20% kept
             text = base.hold_group_commas(text)   # train: 70,000 kept for the external verbalizer
         text = base.join_apostrophes(text)   # E14: it's -> its (BEFORE E5 splits it)
         text = base.strip_punct(text)     # E5
-        text = base.restore_group_commas(text)
+        text = base.restore_tags(base.restore_number_marks(base.restore_group_commas(text)))
         text = text.lower()               # E10
     return base.collapse_space(text)

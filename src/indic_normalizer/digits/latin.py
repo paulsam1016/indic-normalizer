@@ -228,6 +228,11 @@ def _piecewise(s: str) -> List[Candidate]:
     return [Candidate(text, "en", "latin_piecewise")] if text else []
 
 
+# currency key (detect.CURRENCY_KEY) -> (singular, plural)
+CURRENCY_WORDS = {"inr": ("rupee", "rupees"), "usd": ("dollar", "dollars"), "eur": ("euro", "euros"),
+                  "gbp": ("pound", "pounds"), "jpy": ("yen", "yen")}
+
+
 def candidates(core: str, cls: str) -> List[Candidate]:
     """Latin-script English readings of one number token (``cls`` from detect.classify), or []
     when the token can't be read this way (e.g. a Malayalam suffix: 23-ന്)."""
@@ -255,9 +260,13 @@ def candidates(core: str, cls: str) -> List[Candidate]:
                                            "latin_k", "latin_ordinal"))]
             return [Candidate(f"{c.text} {w}", "en", f"{c.form}+{w}") for c in n for w in ("percent", "percentage")]
         if cls == "currency":
-            n = [c for c in _number_any(re.sub(r"(?i)^(₹|rs\.?|inr)\s*|\s*₹$", "", s))
+            from .detect import currency_parts
+            key, amount = currency_parts(s)
+            one, many = CURRENCY_WORDS[key]
+            word = one if amount.replace(",", "") in ("1", "1.0", "1.00") else many
+            n = [c for c in _number_any(amount)
                  if not c.form.startswith(("latin_digit_by_digit", "latin_doubled"))]
-            return [Candidate(f"{c.text} rupees", "en", c.form + "+rupees") for c in n] + \
+            return [Candidate(f"{c.text} {word}", "en", f"{c.form}+{many}") for c in n] + \
                 [Candidate(c.text, "en", c.form + "+nocurrency") for c in n]
         if cls == "time":
             return _time(s)
@@ -281,6 +290,17 @@ def candidates(core: str, cls: str) -> List[Candidate]:
             return out + [Candidate(f"{words(a)} by {words(b)}", "en", "latin_a_by_b"),
                           Candidate(f"{words(a)} {words(b)}", "en", "latin_a_b")]
         if cls in ("alnum", "other"):
+            m = re.match(r"^#(\d+)$", s)
+            if m:                                        # #5 -> number five, five
+                n = _int(m.group(1))
+                return [Candidate(f"number {c.text}", "en", c.form + "+number") for c in n[:3]] + n
+            m = re.match(r"^(\d+(?:\.\d+)?)\s*°\s*([CcFf])?$", s)
+            if m:                                        # 5° -> five degrees, 37°C -> ... celsius
+                unit = {"c": " celsius", "f": " fahrenheit"}.get((m.group(2) or "").lower(), "")
+                n = [c for c in _number_any(m.group(1))
+                     if not c.form.startswith(("latin_digit_by_digit", "latin_doubled"))]
+                deg = "degree" if m.group(1) == "1" else "degrees"
+                return [Candidate(f"{c.text} {deg}{unit}", "en", c.form + "+degree") for c in n[:3]] + n
             if re.search(r"[ഀ-ൿ]", s):
                 return []
             return _piecewise(s)

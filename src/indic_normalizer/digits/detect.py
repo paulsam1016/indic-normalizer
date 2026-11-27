@@ -5,7 +5,7 @@ Classes (first match wins, in this order):
     time_range  4:00-5:00, 1:30-3:30
     time        6:45, 9:00
     percent     70%, 2.5%
-    currency    ₹500, Rs.500, 500₹
+    currency    ₹500, Rs.500, 500₹, 500/-, Rs.500/-, $24, €10, £5, ¥100
     phone       10-13 digits, or +<country code> ...
     range       8-9, 30-40, 19-22
     grouped     1,75,000, 70,000 (comma-grouped integer)
@@ -40,7 +40,8 @@ _PATTERNS = [
     ("time_range", re.compile(rf"^{_D}{{1,2}}[:.]{_D}{{2}}\s*[-–—]\s*{_D}{{1,2}}[:.]{_D}{{2}}$")),
     ("time",       re.compile(rf"^{_D}{{1,2}}:{_D}{{2}}$")),
     ("percent",    re.compile(rf"^{_D}+(?:[.,]{_D}+)?\s*%$")),
-    ("currency",   re.compile(rf"^(?:₹|rs\.?|inr)\s*{_D}[\d,]*(?:\.{_D}+)?$|^{_D}[\d,]*(?:\.{_D}+)?\s*₹$", re.I)),
+    ("currency",   re.compile(rf"^(?:₹|rs\.?|inr|\$|€|£|¥)\s*{_D}[\d,]*(?:\.{_D}+)?(?:/-)?$"
+                              rf"|^{_D}[\d,]*(?:\.{_D}+)?\s*(?:₹|/-)$", re.I)),
     ("phone",      re.compile(rf"^\+?{_D}{{10,13}}$|^\+{_D}{{1,3}}[\s-]?{_D}{{6,12}}$")),
     ("range",      re.compile(rf"^{_D}+(?:\.{_D}+)?\s*[-–—~]\s*{_D}+(?:\.{_D}+)?$")),
     ("grouped",    re.compile(rf"^{_D}{{1,3}}(?:(?:,{_D}{{2}})*,{_D}{{3}}|(?:,{_D}{{3}})+)$")),
@@ -59,14 +60,30 @@ _TRAIL = "\"'”’)»]}.,?!;:…—–-"
 _TOKEN = re.compile(r"\S+")
 
 
-SIGN = r"(?:₹|rs\.?|inr)"                 # currency signs written before / after an amount
+SIGN = r"(?:₹|rs\.?|inr|\$|€|£|¥)"       # currency signs written before an amount
+# currency sign -> key (as base.CURRENCY_KEY): the word a reading adds (രൂപ / ഡോളർ, rupees / dollars)
+CURRENCY_KEY = {"₹": "inr", "rs": "inr", "rs.": "inr", "inr": "inr", "/-": "inr",
+                "$": "usd", "€": "eur", "£": "gbp", "¥": "jpy"}
+_CURRENCY_PARTS = re.compile(r"(?i)^(₹|rs\.?|inr|\$|€|£|¥)?\s*(\d[\d,]*(?:\.\d+)?)\s*(₹|/-)?$")
+
+
+def currency_parts(core: str):
+    """(key, amount) of a currency token: ₹500 -> ("inr", "500"), $24 -> ("usd", "24"),
+    500/- -> ("inr", "500"); None when it is not one."""
+    m = _CURRENCY_PARTS.match(to_ascii_digits(core).strip())
+    if not m or not (m.group(1) or m.group(3)):
+        return None
+    sign = (m.group(1) or m.group(3)).lower()
+    return CURRENCY_KEY[sign], m.group(2)
 
 
 def join_currency(text: str) -> str:
-    """Glue a currency sign written apart to its amount, so the number is read as money and the
-    sign is replaced by the reading: ₹ 70000 -> ₹70000, rs 500 -> rs500, inr 500, 500 ₹ -> 500₹."""
+    """Glue a sign written apart to its amount, so the number is read with it and the sign is
+    replaced by the reading: ₹ 70000 -> ₹70000, rs 500 -> rs500, inr 500, $ 24 -> $24,
+    500 ₹ -> 500₹, 2.5 % -> 2.5%."""
     text = re.sub(rf"(?i)(?<!\S)({SIGN})\s+(?=\d)", r"\1", text or "")
-    return re.sub(r"(\d)\s+₹(?!\S)", r"\1₹", text)
+    text = re.sub(r"(?<!\S)#\s+(?=\d)", "#", text)
+    return re.sub(r"(\d)\s+([₹%])(?!\S)", r"\1\2", text)
 
 
 def to_ascii_digits(s: str) -> str:
@@ -85,6 +102,8 @@ def split_edges(tok: str):
         i += 1
     while j > i and tok[j - 1] in _TRAIL:
         j -= 1
+    if tok[j:j + 1] == "-" and tok[i:j].endswith("/") and j - i > 1 and tok[j - 2].isdigit():
+        j += 1                                    # 500/- : the Indian "rupees only" mark is the number's
     return tok[:i], tok[i:j], tok[j:]
 
 

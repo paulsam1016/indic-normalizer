@@ -47,7 +47,8 @@ def _load(code):
     return None
 
 
-def get_normalizer(lang=None, mode="eval", segmentation=False, itn=None, spell_small=None, mixed=True):
+def get_normalizer(lang=None, mode="eval", segmentation=False, itn=None, spell_small=None, mixed=True,
+                   strip_number_signs=False, remove_tags=False):
     """``(normalize_fn, source)`` for ``lang``/``mode``; universal normalizer as fallback.
 
     ``normalize_fn`` is ``fn(text)`` with ``mode``, ``segmentation``, ``itn``, ``spell_small`` and
@@ -60,7 +61,10 @@ def get_normalizer(lang=None, mode="eval", segmentation=False, itn=None, spell_s
     handlers (``indic_normalizer.mixed``: English in Latin script); False leaves other scripts
     to the shared steps, a dict sets per-handler options. ``spell_small`` is a shortcut for
     ``mixed={"en": {"spell_small": ...}}`` (English style for lone small Latin-script numbers:
-    "I have five" stays; off: "I have 5"). The C1/C2/C6 CER
+    "I have five" stays; off: "I have 5"). ``strip_number_signs`` (train only, default False)
+    removes the signs before / after a number (₹500 -> 500, $24 -> 24, 20% -> 20) instead of
+    keeping them for the digits module. ``remove_tags`` (train only, default False) drops
+    annotation tags (<unintelligible>) instead of keeping them whole. The C1/C2/C6 CER
     folds run automatically in eval mode (no flag).
     """
     base_fn, source = universal.normalize, "indic_normalizer.universal"
@@ -76,7 +80,8 @@ def get_normalizer(lang=None, mode="eval", segmentation=False, itn=None, spell_s
     importlib.import_module(module)._resolve_mode(mode)
     _mixed.resolve(mixed, spell_small)
     return partial(base_fn, mode=mode, segmentation=segmentation, itn=itn, spell_small=spell_small,
-                   mixed=mixed), source
+                   mixed=mixed, strip_number_signs=bool(strip_number_signs),
+                   remove_tags=bool(remove_tags)), source
 
 
 # --- optional: Unicode-block script detection (script routing, NOT language ID) ------

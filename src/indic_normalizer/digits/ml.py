@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
-from .detect import classify, to_ascii_digits
+from .detect import classify, currency_parts, to_ascii_digits
 from .types import Candidate
 
 VIRAMA = "്"
@@ -852,13 +852,41 @@ def _signed(s: str, style: str):
     """-5 / −5 -> മൈനസ് അഞ്ച് (first) and the plain reading; .5 -> പോയിന്റ് അഞ്ച്, അര, ..."""
     m = re.match(r"^[-−]([0-9][0-9,.]*)$", s)
     if m:
-        rest = candidates(m.group(1), None, style)
+        rest = [c for c in candidates(m.group(1), None, style) if not c.form.startswith(_NOT_SIGNED)]
         return [Candidate("മൈനസ് " + c.text, c.lang, c.form + "+minus") for c in rest[:6]] + rest
     m = re.match(r"^\.([0-9]+)$", s)
     if m:
         out = _decimal("0" + s, style)
         return out + [Candidate(f"പോയിന്റ് {digit_by_digit(m.group(1))}", "ml", "point_only"),
                       Candidate(f"പോയിന്റ് {en_digit_by_digit(m.group(1))}", "en", "point_only")]
+    return None
+
+
+# currency key (detect.CURRENCY_KEY) -> (word after a Malayalam reading, after an English one)
+CURRENCY_WORDS = {"inr": ("രൂപ", "റുപ്പീസ്"), "usd": ("ഡോളർ", "ഡോളേഴ്സ്"), "eur": ("യൂറോ", "യൂറോസ്"),
+                  "gbp": ("പൗണ്ട്", "പൗണ്ട്സ്"), "jpy": ("യെൻ", "യെൻ")}
+# the form tags: +rupa / +rupees as before for rupees, +<ml>/+<en> for the others
+CURRENCY_TAG = {"inr": ("rupa", "rupees"), "usd": ("dollar", "dollars"), "eur": ("euro", "euros"),
+                "gbp": ("pound", "pounds"), "jpy": ("yen", "yen")}
+# readings never said after minus / number / before degree: the date ordinal (5 -> ഫിഫ്ത്ത്)
+_NOT_SIGNED = ("ordinal",)
+_HASH = re.compile(r"^#([0-9]+)$")
+_DEGREE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*°\s*([CcFf])?$")
+
+
+def _marked(s: str, style: str):
+    """#5 -> നമ്പർ അഞ്ച് (first) and the bare number; 5° / 37.5°C -> അഞ്ച് ഡിഗ്രി (സെൽഷ്യസ്)
+    and the bare number (the mark is often not said)."""
+    m = _HASH.match(s)
+    if m:
+        rest = [c for c in candidates(m.group(1), None, style) if not c.form.startswith(_NOT_SIGNED)]
+        return [Candidate("നമ്പർ " + c.text, c.lang, c.form + "+number") for c in rest[:4]] + rest
+    m = _DEGREE.match(s)
+    if m:
+        unit = {"c": " സെൽഷ്യസ്", "f": " ഫാരൻഹീറ്റ്"}.get((m.group(2) or "").lower(), "")
+        rest = [c for c in candidates(m.group(1), None, style)
+                if not c.form.startswith(_NOT_SIGNED + ("digit_by_digit", "doubled"))]
+        return [Candidate(f"{c.text} ഡിഗ്രി{unit}", c.lang, c.form + "+degree") for c in rest[:4]] + rest
     return None
 
 
@@ -967,12 +995,14 @@ def _candidates(s: str, cls: str, style: str) -> List[Candidate]:
             out += [Candidate(f"{c.text} {w}", c.lang, c.form + "+" + tag) for w, tag in tags]
         return out
     if cls == "currency":
-        # ₹ / Rs / INR: the amount with രൂപ / റുപ്പീസ്, then the bare amount (the sign is often not
-        # said); never digit by digit
-        n = [c for c in _number_any(re.sub(r"(?i)^(₹|rs\.?|inr)\s*|\s*₹$", "", s), style)
-             if not c.form.startswith(("digit_by_digit", "doubled"))]
-        money = [Candidate(f"{c.text} രൂപ", c.lang, c.form + "+rupa") if c.lang == "ml"
-                 else Candidate(f"{c.text} റുപ്പീസ്", "en", c.form + "+rupees") for c in n]
+        # ₹ / Rs / INR / 500/- (രൂപ / റുപ്പീസ്), $ (ഡോളർ / ഡോളേഴ്സ്), € £ ¥: the amount with the
+        # currency word, then the bare amount (the sign is often not said); never digit by digit
+        key, amount = currency_parts(s)
+        ml_word, en_word = CURRENCY_WORDS[key]
+        n = [c for c in _number_any(amount, style) if not c.form.startswith(("digit_by_digit", "doubled"))]
+        tag = CURRENCY_TAG[key]
+        money = [Candidate(f"{c.text} {ml_word}", c.lang, f"{c.form}+{tag[0]}") if c.lang == "ml"
+                 else Candidate(f"{c.text} {en_word}", "en", f"{c.form}+{tag[1]}") for c in n]
         bare = [Candidate(c.text, c.lang, c.form + "+nocurrency") for c in n if not c.form.endswith("_alt")]
         return money[:4] + bare[:3] + money[4:] + bare[3:]
     if cls == "time":
@@ -994,7 +1024,7 @@ def _candidates(s: str, cls: str, style: str) -> List[Candidate]:
         return out + _pair(_num(a, style), _num(b, style), [("{A} {B}", "a_b"), ("{A} ബൈ {B}", "a_by_b")])
     if cls == "num_suffix":
         return _num_suffix(s, style)
-    sg = _signed(s, style)
+    sg = _signed(s, style) or _marked(s, style)
     if sg is not None:
         return sg
     mm_ = _SUFFIXED.match(s)
